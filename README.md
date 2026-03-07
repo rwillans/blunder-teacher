@@ -1,8 +1,8 @@
-# blunder-teacher (v2 pipeline)
+# blunder-teacher (v3 pipeline)
 
 A minimal local chess analysis pipeline for PGN files, with critical-moment extraction.
 
-## Features in v2
+## Features in v3
 - Accepts one PGN file or a folder of PGN files.
 - Parses games with `python-chess`.
 - Extracts metadata per game:
@@ -10,6 +10,7 @@ A minimal local chess analysis pipeline for PGN files, with critical-moment extr
 - Optional player filter via `--player` (case-insensitive exact name match on White/Black).
 - Runs a real Stockfish smoke test (`analyse()` from initial position).
 - Performs move-by-move engine analysis and flags critical moments using eval swing thresholding.
+- Exports puzzle-ready records from critical positions with simple rule-based prompt assignment.
 - Configurable analysis settings:
   - `--engine-depth` (default: 14)
   - `--eval-threshold` in centipawns (default: 150)
@@ -17,8 +18,11 @@ A minimal local chess analysis pipeline for PGN files, with critical-moment extr
   - `games_summary.csv`
   - `critical_positions.csv`
   - `summary_report.md`
+  - `puzzles.csv`
 
 `critical_positions.csv` includes a `mate_related` column so mate-transition moments can be separated from centipawn-only stats.
+
+`puzzles.csv` exports training-ready puzzles from critical positions with prompt metadata (`prompt_type`, `recommended_focus`, `notes_placeholder`).
 
 ## Requirements
 - Python 3.10+
@@ -60,3 +64,5 @@ python main.py --input /path/to/file_or_folder --output /path/to/output
 - Invalid or malformed PGN sections are handled best-effort.
 - Critical positions capture the board state immediately before the played move.
 - Summary centipawn swing statistics are reported for non-mate critical moments, with mate-related moments counted separately.
+
+- Puzzle prompt types are intentionally simple in v3: `Find the best move`, `Spot the danger`, and `Defend accurately`.

@@ -6,6 +6,7 @@ from pathlib import Path
 from chess_analysis.critical_analysis import CriticalPosition, extract_critical_positions
 from chess_analysis.engine_check import EngineCheckResult
 from chess_analysis.pipeline import run_pipeline
+from chess_analysis.puzzles import assign_prompt_type, build_puzzles
 from chess_analysis.reporting import write_summary_report_md
 
 
@@ -41,7 +42,31 @@ BLUNDER_PGN = """[Event "Blunder Demo"]
 """
 
 
-def test_pipeline_writes_outputs_with_critical_positions(tmp_path: Path) -> None:
+def _critical(eval_before: float, eval_after: float, mate_related: bool) -> CriticalPosition:
+    return CriticalPosition(
+        source_file="a.pgn",
+        game_index=1,
+        event="E",
+        site="S",
+        date="2024.01.01",
+        white="W",
+        black="B",
+        result="1-0",
+        move_number=10,
+        side_to_move="White",
+        fen="fen",
+        played_move="Qh5",
+        engine_best_move="Nf3",
+        eval_before=eval_before,
+        eval_after=eval_after,
+        eval_swing=eval_before - eval_after,
+        mate_related=mate_related,
+        eco="C20",
+        opening="KP",
+    )
+
+
+def test_pipeline_writes_outputs_with_critical_positions_and_puzzles(tmp_path: Path) -> None:
     pgn_path = tmp_path / "sample.pgn"
     out_path = tmp_path / "out"
     pgn_path.write_text(BLUNDER_PGN, encoding="utf-8")
@@ -51,10 +76,24 @@ def test_pipeline_writes_outputs_with_critical_positions(tmp_path: Path) -> None
     assert (out_path / "games_summary.csv").exists()
     assert (out_path / "critical_positions.csv").exists()
     assert (out_path / "summary_report.md").exists()
+    assert (out_path / "puzzles.csv").exists()
 
     with (out_path / "critical_positions.csv").open("r", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
         assert "mate_related" in (reader.fieldnames or [])
+
+    with (out_path / "puzzles.csv").open("r", encoding="utf-8") as handle:
+        reader = csv.DictReader(handle)
+        fieldnames = reader.fieldnames or []
+        assert "prompt_type" in fieldnames
+        assert "recommended_focus" in fieldnames
+
+
+def test_prompt_assignment_logic() -> None:
+    assert assign_prompt_type(_critical(80, -100, False)) == "Spot the danger"
+    assert assign_prompt_type(_critical(-120, -150, False)) == "Defend accurately"
+    assert assign_prompt_type(_critical(50, 0, False)) == "Find the best move"
+    assert assign_prompt_type(_critical(100, -100000, True)) == "Spot the danger"
 
 
 def test_extract_critical_positions_handles_missing_engine() -> None:
@@ -72,60 +111,27 @@ def test_pipeline_does_not_crash_when_engine_missing_for_critical(tmp_path: Path
 
     assert len(result.records) == 2
     assert result.critical_positions == []
+    assert result.puzzles == []
     assert (out_path / "critical_positions.csv").exists()
+    assert (out_path / "puzzles.csv").exists()
 
 
-def test_summary_report_non_mate_stats_are_separate(tmp_path: Path) -> None:
+def test_summary_report_non_mate_stats_and_puzzle_counts(tmp_path: Path) -> None:
     records = []
     critical = [
-        CriticalPosition(
-            source_file="a.pgn",
-            game_index=1,
-            event="E",
-            site="S",
-            date="2024.01.01",
-            white="W",
-            black="B",
-            result="1-0",
-            move_number=10,
-            side_to_move="White",
-            fen="fen",
-            played_move="Qh5",
-            engine_best_move="Nf3",
-            eval_before=200.0,
-            eval_after=0.0,
-            eval_swing=200.0,
-            mate_related=False,
-            eco="C20",
-            opening="KP",
-        ),
-        CriticalPosition(
-            source_file="a.pgn",
-            game_index=1,
-            event="E",
-            site="S",
-            date="2024.01.01",
-            white="W",
-            black="B",
-            result="1-0",
-            move_number=20,
-            side_to_move="Black",
-            fen="fen2",
-            played_move="g6",
-            engine_best_move="Qf6",
-            eval_before=100000.0,
-            eval_after=-100000.0,
-            eval_swing=200000.0,
-            mate_related=True,
-            eco="C20",
-            opening="KP",
-        ),
+        _critical(200.0, 0.0, False),
+        _critical(100000.0, -100000.0, True),
     ]
+    puzzles = build_puzzles(critical)
     engine_result = EngineCheckResult(success=True, engine_path="/usr/games/stockfish", detail="ok")
 
-    report = write_summary_report_md(tmp_path, records, critical, engine_result)
+    report = write_summary_report_md(tmp_path, records, critical, puzzles, engine_result)
     text = report.read_text(encoding="utf-8")
 
     assert "Number of mate-related critical moments: **1**" in text
     assert "Average centipawn swing (non-mate): **200.00 cp**" in text
     assert "Maximum centipawn swing (non-mate): **200.00 cp**" in text
+    assert "Number of puzzles exported: **2**" in text
+    assert "Number of mate-related puzzles: **1**" in text
+    assert "Find the best move: 1" in text
+    assert "Spot the danger: 1" in text
