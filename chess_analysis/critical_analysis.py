@@ -30,6 +30,7 @@ class CriticalPosition:
     eval_before: float
     eval_after: float
     eval_swing: float
+    mate_related: bool
     eco: str
     opening: str
 
@@ -106,6 +107,7 @@ def extract_critical_positions(
 
                     eval_after = -_score_to_cp(post_score, board.turn)
                     swing = eval_before - eval_after
+                    mate_related = bool(pre_score.is_mate() or post_score.is_mate())
 
                     if swing >= eval_threshold:
                         critical_positions.append(
@@ -126,6 +128,7 @@ def extract_critical_positions(
                                 eval_before=float(eval_before),
                                 eval_after=float(eval_after),
                                 eval_swing=float(swing),
+                                mate_related=mate_related,
                                 eco=metadata.eco,
                                 opening=metadata.opening,
                             )

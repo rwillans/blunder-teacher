@@ -18,6 +18,8 @@ A minimal local chess analysis pipeline for PGN files, with critical-moment extr
   - `critical_positions.csv`
   - `summary_report.md`
 
+`critical_positions.csv` includes a `mate_related` column so mate-transition moments can be separated from centipawn-only stats.
+
 ## Requirements
 - Python 3.10+
 - Stockfish installed locally.
@@ -57,3 +59,4 @@ python main.py --input /path/to/file_or_folder --output /path/to/output
 - Missing `ECO`/`Opening` tags are treated as blank values.
 - Invalid or malformed PGN sections are handled best-effort.
 - Critical positions capture the board state immediately before the played move.
+- Summary centipawn swing statistics are reported for non-mate critical moments, with mate-related moments counted separately.

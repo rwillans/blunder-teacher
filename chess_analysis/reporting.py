@@ -74,6 +74,7 @@ def write_critical_positions_csv(output_dir: Path, critical_positions: Iterable[
                 "eval_before",
                 "eval_after",
                 "eval_swing",
+                "mate_related",
                 "eco",
                 "opening",
             ]
@@ -97,6 +98,7 @@ def write_critical_positions_csv(output_dir: Path, critical_positions: Iterable[
                     row.eval_before,
                     row.eval_after,
                     row.eval_swing,
+                    row.mate_related,
                     row.eco,
                     row.opening,
                 ]
@@ -125,15 +127,17 @@ def write_summary_report_md(
     move_hotspots = Counter(c.move_number for c in critical)
     top_moves = sorted(move_hotspots.items(), key=lambda item: item[1], reverse=True)[:10]
 
-    swings = [c.eval_swing for c in critical]
-    avg_swing = mean(swings) if swings else 0.0
-    max_swing = max(swings) if swings else 0.0
+    mate_related_count = sum(1 for c in critical if c.mate_related)
+    non_mate_swings = [c.eval_swing for c in critical if not c.mate_related]
+    avg_non_mate_swing = mean(non_mate_swings) if non_mate_swings else 0.0
+    max_non_mate_swing = max(non_mate_swings) if non_mate_swings else 0.0
 
     lines = [
         "# Chess Analysis Summary Report",
         "",
         f"- Total number of games processed: **{len(rows)}**",
         f"- Number of critical moments found: **{len(critical)}**",
+        f"- Number of mate-related critical moments: **{mate_related_count}**",
         f"- Stockfish analysis succeeded: **{'Yes' if engine_result.success else 'No'}**",
         f"- Stockfish detail: `{engine_result.detail}`",
         f"- Games with missing Opening or ECO tags: **{missing_opening_or_eco}**",
@@ -171,9 +175,9 @@ def write_summary_report_md(
         lines.append("- None")
 
     lines.append("")
-    lines.append("## Eval swing stats (critical moments)")
-    lines.append(f"- Average eval swing: **{avg_swing:.2f} cp**")
-    lines.append(f"- Maximum eval swing: **{max_swing:.2f} cp**")
+    lines.append("## Eval swing stats (non-mate critical moments)")
+    lines.append(f"- Average centipawn swing (non-mate): **{avg_non_mate_swing:.2f} cp**")
+    lines.append(f"- Maximum centipawn swing (non-mate): **{max_non_mate_swing:.2f} cp**")
 
     output_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
     return output_file
