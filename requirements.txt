@@ -1,8 +1,2 @@
 python-chess
-pandas
-pydantic
-typer
-jinja2
 pytest
-pyyaml
-rich
