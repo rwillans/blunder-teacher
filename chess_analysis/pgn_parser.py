@@ -24,12 +24,18 @@ class GameRecord:
     opening: str
 
 
+@dataclass
+class ParsedGame:
+    metadata: GameRecord
+    game: chess.pgn.Game
+
+
 def _header(headers: chess.pgn.Headers, key: str) -> str:
     return (headers.get(key) or "").strip()
 
 
-def parse_pgn_files(pgn_files: Iterable[Path], player: str | None = None) -> List[GameRecord]:
-    records: List[GameRecord] = []
+def parse_pgn_files(pgn_files: Iterable[Path], player: str | None = None) -> List[ParsedGame]:
+    records: List[ParsedGame] = []
     normalized_player = player.strip().lower() if player else None
 
     for pgn_file in pgn_files:
@@ -61,17 +67,20 @@ def parse_pgn_files(pgn_files: Iterable[Path], player: str | None = None) -> Lis
                     eco, opening = resolve_opening_fields(headers)
 
                     records.append(
-                        GameRecord(
-                            source_file=str(pgn_file),
-                            game_index=game_index,
-                            event=_header(headers, "Event"),
-                            site=_header(headers, "Site"),
-                            date=_header(headers, "Date"),
-                            white=white,
-                            black=black,
-                            result=_header(headers, "Result"),
-                            eco=eco,
-                            opening=opening,
+                        ParsedGame(
+                            metadata=GameRecord(
+                                source_file=str(pgn_file),
+                                game_index=game_index,
+                                event=_header(headers, "Event"),
+                                site=_header(headers, "Site"),
+                                date=_header(headers, "Date"),
+                                white=white,
+                                black=black,
+                                result=_header(headers, "Result"),
+                                eco=eco,
+                                opening=opening,
+                            ),
+                            game=game,
                         )
                     )
         except OSError as exc:

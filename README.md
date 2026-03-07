@@ -1,17 +1,24 @@
-# blunder-teacher (v1 pipeline)
+# blunder-teacher (v2 pipeline)
 
-A minimal local chess analysis pipeline for PGN files.
+A minimal local chess analysis pipeline for PGN files, with critical-moment extraction.
 
-## Features in v1
+## Features in v2
 - Accepts one PGN file or a folder of PGN files.
 - Parses games with `python-chess`.
 - Extracts metadata per game:
   - Event, Site, Date, White, Black, Result, ECO, Opening.
 - Optional player filter via `--player` (case-insensitive exact name match on White/Black).
 - Runs a real Stockfish smoke test (`analyse()` from initial position).
+- Performs move-by-move engine analysis and flags critical moments using eval swing thresholding.
+- Configurable analysis settings:
+  - `--engine-depth` (default: 14)
+  - `--eval-threshold` in centipawns (default: 150)
 - Writes:
   - `games_summary.csv`
+  - `critical_positions.csv`
   - `summary_report.md`
+
+`critical_positions.csv` includes a `mate_related` column so mate-transition moments can be separated from centipawn-only stats.
 
 ## Requirements
 - Python 3.10+
@@ -37,6 +44,11 @@ Analyze games for one player only:
 python main.py --input /path/to/file_or_folder --output /path/to/output --player "Rob Willans"
 ```
 
+Tighter critical detection:
+```bash
+python main.py --input /path/to/file_or_folder --output /path/to/output --engine-depth 16 --eval-threshold 200
+```
+
 Optional engine path override:
 ```bash
 export STOCKFISH_PATH=/custom/path/to/stockfish
@@ -45,4 +57,6 @@ python main.py --input /path/to/file_or_folder --output /path/to/output
 
 ## Notes
 - Missing `ECO`/`Opening` tags are treated as blank values.
-- Invalid or malformed PGN sections are handled best-effort; parsing continues where possible.
+- Invalid or malformed PGN sections are handled best-effort.
+- Critical positions capture the board state immediately before the played move.
+- Summary centipawn swing statistics are reported for non-mate critical moments, with mate-related moments counted separately.

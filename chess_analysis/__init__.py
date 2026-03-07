@@ -1,4 +1,4 @@
-"""Core package for chess analysis v1."""
+"""Core package for chess analysis."""
 
 from .pipeline import run_pipeline
 
