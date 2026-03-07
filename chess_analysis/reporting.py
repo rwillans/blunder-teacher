@@ -1,0 +1,179 @@
+from __future__ import annotations
+
+import csv
+from collections import Counter
+from pathlib import Path
+from statistics import mean
+from typing import Iterable
+
+from .critical_analysis import CriticalPosition
+from .engine_check import EngineCheckResult
+from .pgn_parser import GameRecord
+
+
+def write_games_summary_csv(output_dir: Path, records: Iterable[GameRecord]) -> Path:
+    output_file = output_dir / "games_summary.csv"
+    rows = list(records)
+
+    with output_file.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            [
+                "source_file",
+                "game_index",
+                "event",
+                "site",
+                "date",
+                "white",
+                "black",
+                "result",
+                "eco",
+                "opening",
+            ]
+        )
+        for row in rows:
+            writer.writerow(
+                [
+                    row.source_file,
+                    row.game_index,
+                    row.event,
+                    row.site,
+                    row.date,
+                    row.white,
+                    row.black,
+                    row.result,
+                    row.eco,
+                    row.opening,
+                ]
+            )
+
+    return output_file
+
+
+def write_critical_positions_csv(output_dir: Path, critical_positions: Iterable[CriticalPosition]) -> Path:
+    output_file = output_dir / "critical_positions.csv"
+    rows = list(critical_positions)
+
+    with output_file.open("w", encoding="utf-8", newline="") as handle:
+        writer = csv.writer(handle)
+        writer.writerow(
+            [
+                "source_file",
+                "game_index",
+                "event",
+                "site",
+                "date",
+                "white",
+                "black",
+                "result",
+                "move_number",
+                "side_to_move",
+                "fen",
+                "played_move",
+                "engine_best_move",
+                "eval_before",
+                "eval_after",
+                "eval_swing",
+                "eco",
+                "opening",
+            ]
+        )
+        for row in rows:
+            writer.writerow(
+                [
+                    row.source_file,
+                    row.game_index,
+                    row.event,
+                    row.site,
+                    row.date,
+                    row.white,
+                    row.black,
+                    row.result,
+                    row.move_number,
+                    row.side_to_move,
+                    row.fen,
+                    row.played_move,
+                    row.engine_best_move,
+                    row.eval_before,
+                    row.eval_after,
+                    row.eval_swing,
+                    row.eco,
+                    row.opening,
+                ]
+            )
+
+    return output_file
+
+
+def write_summary_report_md(
+    output_dir: Path,
+    records: Iterable[GameRecord],
+    critical_positions: Iterable[CriticalPosition],
+    engine_result: EngineCheckResult,
+) -> Path:
+    output_file = output_dir / "summary_report.md"
+    rows = list(records)
+    critical = list(critical_positions)
+
+    players = sorted({name for r in rows for name in (r.white, r.black) if name})
+    results = Counter(r.result for r in rows if r.result)
+    openings = sorted({r.opening for r in rows if r.opening})
+    missing_opening_or_eco = sum(1 for r in rows if not r.opening or not r.eco)
+
+    critical_by_game = Counter((c.source_file, c.game_index) for c in critical)
+    top_games = sorted(critical_by_game.items(), key=lambda item: item[1], reverse=True)[:5]
+    move_hotspots = Counter(c.move_number for c in critical)
+    top_moves = sorted(move_hotspots.items(), key=lambda item: item[1], reverse=True)[:10]
+
+    swings = [c.eval_swing for c in critical]
+    avg_swing = mean(swings) if swings else 0.0
+    max_swing = max(swings) if swings else 0.0
+
+    lines = [
+        "# Chess Analysis Summary Report",
+        "",
+        f"- Total number of games processed: **{len(rows)}**",
+        f"- Number of critical moments found: **{len(critical)}**",
+        f"- Stockfish analysis succeeded: **{'Yes' if engine_result.success else 'No'}**",
+        f"- Stockfish detail: `{engine_result.detail}`",
+        f"- Games with missing Opening or ECO tags: **{missing_opening_or_eco}**",
+        "",
+        "## Players encountered",
+    ]
+    lines.extend([f"- {player}" for player in players] or ["- None"])
+
+    lines.append("")
+    lines.append("## Results summary")
+    if results:
+        for result, count in sorted(results.items()):
+            lines.append(f"- {result}: {count}")
+    else:
+        lines.append("- None")
+
+    lines.append("")
+    lines.append("## Openings encountered (where present)")
+    lines.extend([f"- {opening}" for opening in openings] or ["- None"])
+
+    lines.append("")
+    lines.append("## Games with the most critical moments")
+    if top_games:
+        for (source_file, game_index), count in top_games:
+            lines.append(f"- {source_file} (game {game_index}): {count}")
+    else:
+        lines.append("- None")
+
+    lines.append("")
+    lines.append("## Move numbers where critical moments most often occurred")
+    if top_moves:
+        for move_number, count in top_moves:
+            lines.append(f"- Move {move_number}: {count}")
+    else:
+        lines.append("- None")
+
+    lines.append("")
+    lines.append("## Eval swing stats (critical moments)")
+    lines.append(f"- Average eval swing: **{avg_swing:.2f} cp**")
+    lines.append(f"- Maximum eval swing: **{max_swing:.2f} cp**")
+
+    output_file.write_text("\n".join(lines) + "\n", encoding="utf-8")
+    return output_file
