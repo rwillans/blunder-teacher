@@ -1,13 +1,15 @@
 from __future__ import annotations
 
 import csv
+import sys
 from pathlib import Path
 
 from chess_analysis.critical_analysis import CriticalPosition, extract_critical_positions
 from chess_analysis.engine_check import EngineCheckResult
-from chess_analysis.pipeline import run_pipeline
+from chess_analysis.pipeline import _filter_player_mistakes_only, run_pipeline
 from chess_analysis.puzzles import assign_prompt_type, build_puzzles
 from chess_analysis.reporting import write_summary_report_md
+from main import main
 
 
 SAMPLE_PGN = """[Event "Casual Game"]
@@ -42,18 +44,25 @@ BLUNDER_PGN = """[Event "Blunder Demo"]
 """
 
 
-def _critical(eval_before: float, eval_after: float, mate_related: bool) -> CriticalPosition:
+def _critical(
+    eval_before: float,
+    eval_after: float,
+    mate_related: bool,
+    white: str = "W",
+    black: str = "B",
+    side_to_move: str = "White",
+) -> CriticalPosition:
     return CriticalPosition(
         source_file="a.pgn",
         game_index=1,
         event="E",
         site="S",
         date="2024.01.01",
-        white="W",
-        black="B",
+        white=white,
+        black=black,
         result="1-0",
         move_number=10,
-        side_to_move="White",
+        side_to_move=side_to_move,
         fen="fen",
         played_move="Qh5",
         engine_best_move="Nf3",
@@ -87,6 +96,91 @@ def test_pipeline_writes_outputs_with_critical_positions_and_puzzles(tmp_path: P
         fieldnames = reader.fieldnames or []
         assert "prompt_type" in fieldnames
         assert "recommended_focus" in fieldnames
+
+
+def test_default_inputs_directory_when_input_omitted(tmp_path: Path, monkeypatch) -> None:
+    inputs_dir = tmp_path / "inputs"
+    inputs_dir.mkdir()
+    (inputs_dir / "one.pgn").write_text(SAMPLE_PGN, encoding="utf-8")
+
+    out_dir = tmp_path / "out"
+    monkeypatch.chdir(tmp_path)
+    monkeypatch.setattr(sys, "argv", ["main.py", "--output", str(out_dir), "--engine-depth", "8"])
+
+    code = main()
+    assert code == 0
+    assert (out_dir / "games_summary.csv").exists()
+
+
+def test_multiple_pgns_combined_and_player_filtering(tmp_path: Path) -> None:
+    pgn_dir = tmp_path / "pgns"
+    pgn_dir.mkdir()
+    (pgn_dir / "a.pgn").write_text(
+        """[Event "G1"]\n[Site "S"]\n[Date "2024.01.01"]\n[White "Rob Willans"]\n[Black "Bob"]\n[Result "1-0"]\n\n1. e4 e5 1-0\n""",
+        encoding="utf-8",
+    )
+    (pgn_dir / "b.pgn").write_text(
+        """[Event "G2"]\n[Site "S"]\n[Date "2024.01.02"]\n[White "Alice"]\n[Black "Carol"]\n[Result "0-1"]\n\n1. d4 d5 0-1\n""",
+        encoding="utf-8",
+    )
+
+    out_dir = tmp_path / "out"
+    result = run_pipeline(str(pgn_dir), str(out_dir), player="rob willans", engine_depth=8, eval_threshold=150)
+
+    assert result.pgn_file_count == 2
+    assert len(result.records) == 1
+    assert result.records[0].white == "Rob Willans"
+
+
+def test_player_mistakes_filter_helper() -> None:
+    critical_positions = [
+        _critical(150, 0, False, white="Rob Willans", black="Other", side_to_move="White"),
+        _critical(150, 0, False, white="Rob Willans", black="Other", side_to_move="Black"),
+    ]
+
+    no_filter = _filter_player_mistakes_only(critical_positions, player="Rob Willans", player_mistakes_only=False)
+    assert len(no_filter) == 2
+
+    filtered = _filter_player_mistakes_only(critical_positions, player="rob willans", player_mistakes_only=True)
+    assert len(filtered) == 1
+    assert filtered[0].side_to_move == "White"
+
+
+def test_player_mistakes_filter_propagates_to_csv_and_puzzles(tmp_path: Path, monkeypatch) -> None:
+    pgn_path = tmp_path / "game.pgn"
+    pgn_path.write_text(
+        """[Event "G1"]\n[Site "S"]\n[Date "2024.01.01"]\n[White "Rob Willans"]\n[Black "Other"]\n[Result "1-0"]\n\n1. e4 e5 1-0\n""",
+        encoding="utf-8",
+    )
+    out_path = tmp_path / "out"
+
+    stub_critical = [
+        _critical(150, -10, False, white="Rob Willans", black="Other", side_to_move="White"),
+        _critical(170, -20, False, white="Rob Willans", black="Other", side_to_move="Black"),
+    ]
+
+    monkeypatch.setattr("chess_analysis.pipeline.extract_critical_positions", lambda *args, **kwargs: stub_critical)
+
+    result = run_pipeline(
+        str(pgn_path),
+        str(out_path),
+        player="Rob Willans",
+        player_mistakes_only=True,
+        engine_depth=8,
+        eval_threshold=150,
+    )
+
+    assert len(result.critical_positions) == 1
+    assert len(result.puzzles) == 1
+
+    with (out_path / "critical_positions.csv").open("r", encoding="utf-8") as handle:
+        rows = list(csv.DictReader(handle))
+    with (out_path / "puzzles.csv").open("r", encoding="utf-8") as handle:
+        puzzle_rows = list(csv.DictReader(handle))
+
+    assert len(rows) == 1
+    assert len(puzzle_rows) == 1
+    assert rows[0]["side_to_move"] == "White"
 
 
 def test_prompt_assignment_logic() -> None:
@@ -125,9 +219,23 @@ def test_summary_report_non_mate_stats_and_puzzle_counts(tmp_path: Path) -> None
     puzzles = build_puzzles(critical)
     engine_result = EngineCheckResult(success=True, engine_path="/usr/games/stockfish", detail="ok")
 
-    report = write_summary_report_md(tmp_path, records, critical, puzzles, engine_result)
+    report = write_summary_report_md(
+        tmp_path,
+        records,
+        critical,
+        puzzles,
+        engine_result,
+        input_path="inputs",
+        player_filter="Rob Willans",
+        player_mistakes_only=True,
+        pgn_files=["a.pgn", "b.pgn"],
+    )
     text = report.read_text(encoding="utf-8")
 
+    assert "Player filtering applied: **Yes**" in text
+    assert "Player-mistakes-only filtering applied: **Yes**" in text
+    assert "Number of PGN files analysed: **2**" in text
+    assert "Total number of games processed (after filtering): **0**" in text
     assert "Number of mate-related critical moments: **1**" in text
     assert "Average centipawn swing (non-mate): **200.00 cp**" in text
     assert "Maximum centipawn swing (non-mate): **200.00 cp**" in text
