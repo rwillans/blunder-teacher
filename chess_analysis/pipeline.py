@@ -12,6 +12,7 @@ from .puzzles import PuzzleRecord, build_puzzles
 from .reporting import (
     write_critical_positions_csv,
     write_games_summary_csv,
+    write_puzzle_report_html,
     write_puzzles_csv,
     write_summary_report_md,
 )
@@ -50,6 +51,7 @@ class PipelineResult:
     csv_path: str
     critical_csv_path: str
     puzzles_csv_path: str
+    puzzle_html_path: str
     report_path: str
 
 
@@ -87,6 +89,15 @@ def run_pipeline(
     csv_path = str(write_games_summary_csv(output_dir, records))
     critical_csv_path = str(write_critical_positions_csv(output_dir, critical_positions))
     puzzles_csv_path = str(write_puzzles_csv(output_dir, puzzles))
+    puzzle_html_path = str(
+        write_puzzle_report_html(
+            output_dir,
+            puzzles,
+            input_path=input_path,
+            player_filter=player,
+            player_mistakes_only=player_mistakes_only and bool(player),
+        )
+    )
     report_path = str(
         write_summary_report_md(
             output_dir,
@@ -104,6 +115,7 @@ def run_pipeline(
     logging.info("Wrote games summary CSV: %s", csv_path)
     logging.info("Wrote critical positions CSV: %s", critical_csv_path)
     logging.info("Wrote puzzles CSV: %s", puzzles_csv_path)
+    logging.info("Wrote puzzle HTML report: %s", puzzle_html_path)
     logging.info("Wrote summary report: %s", report_path)
 
     return PipelineResult(
@@ -119,5 +131,6 @@ def run_pipeline(
         csv_path=csv_path,
         critical_csv_path=critical_csv_path,
         puzzles_csv_path=puzzles_csv_path,
+        puzzle_html_path=puzzle_html_path,
         report_path=report_path,
     )

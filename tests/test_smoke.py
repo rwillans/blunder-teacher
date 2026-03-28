@@ -8,7 +8,7 @@ from chess_analysis.critical_analysis import CriticalPosition, extract_critical_
 from chess_analysis.engine_check import EngineCheckResult
 from chess_analysis.pipeline import _filter_player_mistakes_only, run_pipeline
 from chess_analysis.puzzles import assign_prompt_type, build_puzzles
-from chess_analysis.reporting import write_summary_report_md
+from chess_analysis.reporting import write_puzzle_report_html, write_summary_report_md
 from main import main
 
 
@@ -86,6 +86,7 @@ def test_pipeline_writes_outputs_with_critical_positions_and_puzzles(tmp_path: P
     assert (out_path / "critical_positions.csv").exists()
     assert (out_path / "summary_report.md").exists()
     assert (out_path / "puzzles.csv").exists()
+    assert (out_path / "puzzles.html").exists()
 
     with (out_path / "critical_positions.csv").open("r", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
@@ -243,3 +244,29 @@ def test_summary_report_non_mate_stats_and_puzzle_counts(tmp_path: Path) -> None
     assert "Number of mate-related puzzles: **1**" in text
     assert "Find the best move: 1" in text
     assert "Spot the danger: 1" in text
+
+
+def test_puzzle_report_html_groups_by_prompt_and_opening_with_reveal_button(tmp_path: Path) -> None:
+    puzzles = build_puzzles(
+        [
+            _critical(150.0, 0.0, False, white="Rob Willans", black="Other", side_to_move="White"),
+            _critical(-120.0, -250.0, False, white="Other", black="Rob Willans", side_to_move="Black"),
+        ]
+    )
+
+    html_report = write_puzzle_report_html(
+        tmp_path,
+        puzzles,
+        input_path="inputs",
+        player_filter="Rob Willans",
+        player_mistakes_only=True,
+    )
+    text = html_report.read_text(encoding="utf-8")
+
+    assert "Blunder Teacher v5 Puzzle Report" in text
+    assert "Find the best move" in text
+    assert "Defend accurately" in text
+    assert "Open position on Lichess" in text
+    assert "Reveal best engine move" in text
+    assert "Move 10: Qh5" in text
+    assert "Rob Willans vs Other" in text or "Other vs Rob Willans" in text

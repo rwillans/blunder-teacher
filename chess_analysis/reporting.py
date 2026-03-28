@@ -2,9 +2,11 @@ from __future__ import annotations
 
 import csv
 from collections import Counter
+from html import escape
 from pathlib import Path
 from statistics import mean
 from typing import Iterable
+from urllib.parse import quote
 
 from .critical_analysis import CriticalPosition
 from .engine_check import EngineCheckResult
@@ -172,6 +174,374 @@ def write_puzzles_csv(output_dir: Path, puzzles: Iterable[PuzzleRecord]) -> Path
                 ]
             )
 
+    return output_file
+
+
+def _lichess_analysis_url(fen: str, side_to_move: str) -> str:
+    color = "white" if side_to_move.strip().lower() == "white" else "black"
+    fen_path = quote(fen, safe="/")
+    return f"https://lichess.org/analysis/{fen_path}?color={color}"
+
+
+def write_puzzle_report_html(
+    output_dir: Path,
+    puzzles: Iterable[PuzzleRecord],
+    input_path: str,
+    player_filter: str | None,
+    player_mistakes_only: bool,
+) -> Path:
+    output_file = output_dir / "puzzles.html"
+    puzzle_rows = list(puzzles)
+
+    grouped: dict[str, dict[str, list[PuzzleRecord]]] = {}
+    for puzzle in puzzle_rows:
+        prompt_group = grouped.setdefault(puzzle.prompt_type, {})
+        opening_group = prompt_group.setdefault(puzzle.opening or "Unknown Opening", [])
+        opening_group.append(puzzle)
+
+    summary_bits = [
+        f"<strong>{len(puzzle_rows)}</strong> puzzle(s)",
+        f"Input: <code>{escape(input_path)}</code>",
+        f"Player filter: <strong>{escape(player_filter or 'None')}</strong>",
+        "Mistakes-only: <strong>{}</strong>".format("Yes" if player_mistakes_only else "No"),
+    ]
+
+    sections: list[str] = []
+    for prompt_type in sorted(grouped):
+        prompt_sections: list[str] = []
+        for opening in sorted(grouped[prompt_type]):
+            cards: list[str] = []
+            for puzzle in grouped[prompt_type][opening]:
+                description = (
+                    f"{puzzle.event or 'Unknown event'} | {puzzle.date or 'Unknown date'} | "
+                    f"{puzzle.white or 'White'} vs {puzzle.black or 'Black'} | "
+                    f"Move {puzzle.move_number}: {puzzle.played_move}"
+                )
+                best_move_id = f"{puzzle.puzzle_id}-best-move"
+                cards.append(
+                    f"""
+                    <article class="puzzle-card">
+                      <div class="card-header">
+                        <div>
+                          <p class="eyebrow">{escape(puzzle.puzzle_id)}</p>
+                          <h4>{escape(puzzle.prompt)}</h4>
+                        </div>
+                        <span class="badge">{escape(puzzle.side_to_move)} to move</span>
+                      </div>
+                      <p class="description">{escape(description)}</p>
+                      <dl class="meta-grid">
+                        <div>
+                          <dt>Opening</dt>
+                          <dd>{escape(puzzle.opening or 'Unknown Opening')}</dd>
+                        </div>
+                        <div>
+                          <dt>Focus</dt>
+                          <dd>{escape(puzzle.recommended_focus)}</dd>
+                        </div>
+                        <div>
+                          <dt>FEN</dt>
+                          <dd><code>{escape(puzzle.fen)}</code></dd>
+                        </div>
+                        <div>
+                          <dt>Lichess</dt>
+                          <dd><a href="{escape(_lichess_analysis_url(puzzle.fen, puzzle.side_to_move))}" target="_blank" rel="noreferrer">Open position on Lichess</a></dd>
+                        </div>
+                      </dl>
+                      <div class="reveal-block">
+                        <button type="button" class="reveal-button" data-target="{escape(best_move_id)}" aria-controls="{escape(best_move_id)}" aria-expanded="false">
+                          Reveal best engine move
+                        </button>
+                        <p id="{escape(best_move_id)}" class="best-move" hidden>
+                          Best engine move: <strong>{escape(puzzle.engine_best_move or 'Unavailable')}</strong>
+                        </p>
+                      </div>
+                    </article>
+                    """
+                )
+
+            prompt_sections.append(
+                f"""
+                <section class="opening-group">
+                  <div class="group-heading">
+                    <h3>{escape(opening)}</h3>
+                    <span>{len(grouped[prompt_type][opening])} puzzle(s)</span>
+                  </div>
+                  <div class="puzzle-grid">
+                    {''.join(cards)}
+                  </div>
+                </section>
+                """
+            )
+
+        sections.append(
+            f"""
+            <section class="prompt-group">
+              <div class="prompt-header">
+                <h2>{escape(prompt_type)}</h2>
+                <span>{sum(len(items) for items in grouped[prompt_type].values())} puzzle(s)</span>
+              </div>
+              {''.join(prompt_sections)}
+            </section>
+            """
+        )
+
+    body = f"""<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Blunder Teacher v5 Puzzle Report</title>
+    <style>
+      :root {{
+        --bg: #f4efe6;
+        --panel: #fffaf2;
+        --panel-strong: #fff;
+        --ink: #1f1a16;
+        --muted: #6d6258;
+        --accent: #155eef;
+        --accent-soft: #dce8ff;
+        --border: #d8ccbe;
+        --shadow: 0 14px 34px rgba(45, 33, 20, 0.08);
+      }}
+
+      * {{
+        box-sizing: border-box;
+      }}
+
+      body {{
+        margin: 0;
+        font-family: Georgia, "Times New Roman", serif;
+        color: var(--ink);
+        background:
+          radial-gradient(circle at top left, rgba(21, 94, 239, 0.12), transparent 28%),
+          linear-gradient(180deg, #fbf8f2 0%, var(--bg) 100%);
+      }}
+
+      main {{
+        width: min(1180px, calc(100vw - 32px));
+        margin: 0 auto;
+        padding: 32px 0 48px;
+      }}
+
+      .hero {{
+        background: linear-gradient(135deg, rgba(255, 255, 255, 0.94), rgba(250, 242, 230, 0.92));
+        border: 1px solid var(--border);
+        border-radius: 24px;
+        box-shadow: var(--shadow);
+        padding: 28px;
+        margin-bottom: 28px;
+      }}
+
+      .hero h1,
+      .prompt-header h2,
+      .group-heading h3,
+      .card-header h4 {{
+        margin: 0;
+        font-family: "Palatino Linotype", Palatino, serif;
+      }}
+
+      .hero p {{
+        margin: 12px 0 0;
+        color: var(--muted);
+        line-height: 1.6;
+      }}
+
+      .summary-strip {{
+        display: flex;
+        flex-wrap: wrap;
+        gap: 10px;
+        margin-top: 18px;
+      }}
+
+      .summary-strip span,
+      .badge,
+      .prompt-header span,
+      .group-heading span {{
+        background: var(--accent-soft);
+        color: var(--accent);
+        border-radius: 999px;
+        padding: 8px 12px;
+        font-size: 0.95rem;
+      }}
+
+      .prompt-group,
+      .opening-group {{
+        margin-bottom: 24px;
+      }}
+
+      .prompt-header,
+      .group-heading,
+      .card-header {{
+        display: flex;
+        justify-content: space-between;
+        gap: 12px;
+        align-items: flex-start;
+      }}
+
+      .opening-group {{
+        background: rgba(255, 255, 255, 0.72);
+        border: 1px solid rgba(216, 204, 190, 0.9);
+        border-radius: 22px;
+        padding: 20px;
+        box-shadow: var(--shadow);
+      }}
+
+      .puzzle-grid {{
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+        gap: 16px;
+        margin-top: 16px;
+      }}
+
+      .puzzle-card {{
+        background: var(--panel-strong);
+        border: 1px solid var(--border);
+        border-radius: 18px;
+        padding: 18px;
+      }}
+
+      .eyebrow {{
+        margin: 0 0 6px;
+        color: var(--muted);
+        font-size: 0.8rem;
+        letter-spacing: 0.08em;
+        text-transform: uppercase;
+      }}
+
+      .description {{
+        margin: 14px 0;
+        line-height: 1.6;
+      }}
+
+      .meta-grid {{
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 14px;
+        margin: 0;
+      }}
+
+      .meta-grid div {{
+        background: var(--panel);
+        border-radius: 14px;
+        padding: 12px;
+      }}
+
+      .meta-grid dt {{
+        font-size: 0.8rem;
+        color: var(--muted);
+        text-transform: uppercase;
+        letter-spacing: 0.05em;
+        margin-bottom: 6px;
+      }}
+
+      .meta-grid dd {{
+        margin: 0;
+        line-height: 1.5;
+        word-break: break-word;
+      }}
+
+      .meta-grid code,
+      .summary-strip code {{
+        font-family: "Cascadia Code", Consolas, monospace;
+        font-size: 0.9rem;
+      }}
+
+      .reveal-block {{
+        margin-top: 16px;
+      }}
+
+      .reveal-button {{
+        appearance: none;
+        border: 0;
+        border-radius: 999px;
+        background: var(--accent);
+        color: white;
+        font: inherit;
+        padding: 10px 16px;
+        cursor: pointer;
+      }}
+
+      .reveal-button:hover,
+      .reveal-button:focus-visible {{
+        background: #0f4bcc;
+      }}
+
+      .best-move {{
+        margin: 12px 0 0;
+        padding: 12px 14px;
+        border-left: 4px solid var(--accent);
+        background: #eef4ff;
+        border-radius: 0 12px 12px 0;
+      }}
+
+      .empty-state {{
+        background: rgba(255, 255, 255, 0.82);
+        border: 1px dashed var(--border);
+        border-radius: 18px;
+        padding: 24px;
+        text-align: center;
+        color: var(--muted);
+      }}
+
+      @media (max-width: 720px) {{
+        main {{
+          width: min(100vw - 18px, 100%);
+          padding-top: 18px;
+        }}
+
+        .hero,
+        .opening-group,
+        .puzzle-card {{
+          padding: 16px;
+        }}
+
+        .meta-grid {{
+          grid-template-columns: 1fr;
+        }}
+
+        .prompt-header,
+        .group-heading,
+        .card-header {{
+          flex-direction: column;
+        }}
+      }}
+    </style>
+  </head>
+  <body>
+    <main>
+      <section class="hero">
+        <h1>Blunder Teacher v5 Puzzle Report</h1>
+        <p>Puzzles are grouped first by prompt type and then by opening, so it is easier to review similar training moments together.</p>
+        <p>Lichess links open the position directly. Engine visibility on Lichess is controlled there, so this report cannot reliably force it off by URL.</p>
+        <div class="summary-strip">
+          {''.join(f'<span>{bit}</span>' for bit in summary_bits)}
+        </div>
+      </section>
+      {''.join(sections) if sections else '<section class="empty-state"><p>No puzzles were generated for this run.</p></section>'}
+    </main>
+    <script>
+      for (const button of document.querySelectorAll('.reveal-button')) {{
+        button.addEventListener('click', () => {{
+          const target = document.getElementById(button.dataset.target);
+          if (!target) return;
+          const isHidden = target.hasAttribute('hidden');
+          if (isHidden) {{
+            target.removeAttribute('hidden');
+            button.textContent = 'Hide best engine move';
+            button.setAttribute('aria-expanded', 'true');
+          }} else {{
+            target.setAttribute('hidden', '');
+            button.textContent = 'Reveal best engine move';
+            button.setAttribute('aria-expanded', 'false');
+          }}
+        }});
+      }}
+    </script>
+  </body>
+</html>
+"""
+
+    output_file.write_text(body, encoding="utf-8")
     return output_file
 
 

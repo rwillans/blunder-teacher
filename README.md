@@ -1,8 +1,8 @@
-# blunder-teacher (v4 pipeline)
+# blunder-teacher (v5 pipeline)
 
-A minimal local chess analysis pipeline for PGN files, with critical-moment extraction and puzzle export.
+A minimal local chess analysis pipeline for PGN files, with critical-moment extraction, puzzle export, and an HTML puzzle review report.
 
-## Features in v4
+## Features in v5
 - Accepts one PGN file or a folder of PGN files.
 - Supports default input directory: if `--input` is omitted, uses `./inputs`.
 - Combines all discovered PGN files in one analysis run.
@@ -14,6 +14,7 @@ A minimal local chess analysis pipeline for PGN files, with critical-moment extr
 - Runs a real Stockfish smoke test (`analyse()` from initial position).
 - Performs move-by-move engine analysis and flags critical moments using eval swing thresholding.
 - Exports puzzle-ready records from critical positions with simple rule-based prompt assignment.
+- Produces a standalone HTML puzzle report grouped by prompt type and opening, with Lichess links and reveal-the-answer interactions.
 - Configurable analysis settings:
   - `--engine-depth` (default: 14)
   - `--eval-threshold` in centipawns (default: 150)
@@ -21,6 +22,7 @@ A minimal local chess analysis pipeline for PGN files, with critical-moment extr
   - `games_summary.csv`
   - `critical_positions.csv`
   - `puzzles.csv`
+  - `puzzles.html`
   - `summary_report.md`
 
 `critical_positions.csv` includes a `mate_related` column so mate-transition moments can be separated from centipawn-only stats.
@@ -75,5 +77,5 @@ python main.py --output /path/to/output
 - Invalid or malformed PGN sections are handled best-effort.
 - Critical positions capture the board state immediately before the played move.
 - Summary centipawn swing statistics are reported for non-mate critical moments, with mate-related moments counted separately.
-- Puzzle prompt types are intentionally simple in v4: `Find the best move`, `Spot the danger`, and `Defend accurately`.
+- Puzzle prompt types are intentionally simple in v5: `Find the best move`, `Spot the danger`, and `Defend accurately`.
 - `--player-mistakes-only` has effect only when `--player` is provided.
