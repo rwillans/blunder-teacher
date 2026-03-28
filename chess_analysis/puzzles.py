@@ -51,18 +51,25 @@ class PuzzleRecord:
     legal_move_options: list[LegalMoveOption] = field(default_factory=list)
 
 
+def _eval_for_side(eval_cp: float, side_to_move: str) -> float:
+    return eval_cp if side_to_move.strip().lower() == "white" else -eval_cp
+
+
 def assign_prompt_type(critical: CriticalPosition) -> str:
     """Simple rule-based prompt selector for v1 puzzle export."""
+    mover_eval_before = _eval_for_side(critical.eval_before, critical.side_to_move)
+    mover_eval_after = _eval_for_side(critical.eval_after, critical.side_to_move)
+
     # Mate transitions are usually tactical danger moments.
     if critical.mate_related:
         return "Spot the danger"
 
     # Already under pressure before the move: emphasize defense.
-    if critical.eval_before < -80:
+    if mover_eval_before < -80:
         return "Defend accurately"
 
     # Not yet bad, but the played move allows a dangerous downturn.
-    if critical.eval_after <= -100:
+    if mover_eval_after <= -100:
         return "Spot the danger"
 
     # Otherwise treat as a missed-improvement exercise.

@@ -268,7 +268,7 @@ def _build_puzzle_viewer_html(
           linear-gradient(180deg, #fbf8f2 0%, var(--bg) 100%);
       }}
       .app-shell {{
-        width: min(1380px, calc(100vw - 24px));
+        width: min(1820px, calc(100vw - 24px));
         margin: 0 auto;
         padding: 20px 0 32px;
         display: grid;
@@ -285,12 +285,12 @@ def _build_puzzle_viewer_html(
       .viewer {{ padding: 22px; }}
       h1, h2, h3 {{ margin: 0; font-family: "Palatino Linotype", Palatino, serif; }}
       .subtle, .sidebar p {{ color: var(--muted); line-height: 1.6; }}
-      .run-meta, .headline, .nav-controls, .toolbar, .actions, .filter-actions, .board-stack, .board-layout {{
+      .run-meta, .headline, .nav-controls, .toolbar, .actions, .filter-actions, .board-stack {{
         display: flex;
         flex-wrap: wrap;
         gap: 10px;
       }}
-      .headline, .toolbar, .board-layout {{ justify-content: space-between; align-items: center; }}
+      .headline, .toolbar {{ justify-content: space-between; align-items: center; }}
       .run-meta {{ margin-top: 16px; }}
       .pill {{
         background: var(--accent-soft);
@@ -326,7 +326,19 @@ def _build_puzzle_viewer_html(
         border-radius: 22px;
         padding: 20px;
       }}
-      .board-stack {{ align-items: flex-start; }}
+      .board-layout {{
+        display: grid;
+        grid-template-columns: minmax(360px, 500px) minmax(700px, 1fr);
+        gap: 24px;
+        align-items: start;
+        margin-top: 18px;
+      }}
+      .board-stack {{
+        align-items: flex-start;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        gap: 16px;
+      }}
       .eval-wrap {{ display: flex; flex-direction: column; align-items: center; gap: 8px; }}
       .eval-bar {{
         width: 22px;
@@ -361,11 +373,10 @@ def _build_puzzle_viewer_html(
       .square.target {{ box-shadow: inset 0 0 0 999px var(--highlight); }}
       .square.submitted {{ box-shadow: inset 0 0 0 4px rgba(28, 143, 82, 0.5); }}
       .board-caption {{ margin-top: 10px; color: var(--muted); }}
-      .info-grid {{
+      .details-grid {{
         display: grid;
-        grid-template-columns: repeat(2, minmax(0, 1fr));
+        grid-template-columns: repeat(2, minmax(280px, 1fr));
         gap: 14px;
-        margin-top: 20px;
       }}
       .info-panel, .feedback-panel, .reveal-panel, .empty-state {{
         background: var(--panel-strong);
@@ -376,7 +387,7 @@ def _build_puzzle_viewer_html(
       .info-panel dl, .feedback-panel dl, .reveal-panel dl {{ margin: 0; display: grid; gap: 12px; }}
       dt {{ font-size: 0.82rem; color: var(--muted); text-transform: uppercase; letter-spacing: 0.05em; margin-bottom: 6px; }}
       dd {{ margin: 0; line-height: 1.6; word-break: break-word; }}
-      .feedback-panel, .reveal-panel {{ margin-top: 16px; }}
+      .span-two {{ grid-column: 1 / -1; }}
       .verdict {{ font-weight: 700; }}
       .verdict.excellent, .verdict.good {{ color: var(--good); }}
       .verdict.inaccuracy, .verdict.mistake {{ color: var(--warn); }}
@@ -385,13 +396,18 @@ def _build_puzzle_viewer_html(
       .hidden {{ display: none !important; }}
       .hint {{ margin-top: 12px; color: var(--muted); }}
       a {{ color: var(--accent); }}
+      @media (max-width: 1420px) {{
+        .details-grid {{ grid-template-columns: 1fr; }}
+        .span-two {{ grid-column: auto; }}
+      }}
       @media (max-width: 1040px) {{
         .app-shell {{ grid-template-columns: 1fr; }}
         .sidebar {{ position: static; }}
       }}
       @media (max-width: 760px) {{
-        .info-grid {{ grid-template-columns: 1fr; }}
-        .headline, .nav-controls, .toolbar, .board-layout, .board-stack, .actions, .filter-actions {{ flex-direction: column; align-items: stretch; }}
+        .headline, .nav-controls, .toolbar, .board-stack, .actions, .filter-actions {{ flex-direction: column; align-items: stretch; }}
+        .board-layout {{ grid-template-columns: 1fr; }}
+        .details-grid {{ grid-template-columns: 1fr; }}
         .eval-bar {{ height: 220px; }}
         .board {{ grid-template-columns: repeat(8, minmax(34px, 1fr)); width: 100%; }}
       }}
@@ -473,49 +489,50 @@ def _build_puzzle_viewer_html(
                 <div id="board-caption" class="board-caption"></div>
               </div>
             </div>
-            <div class="info-grid">
+            <div class="details-grid">
               <section class="info-panel">
-                <h3>Position</h3>
+                <h3>Game</h3>
                 <dl>
                   <div><dt>Event</dt><dd id="meta-event"></dd></div>
                   <div><dt>Date</dt><dd id="meta-date"></dd></div>
                   <div><dt>Players</dt><dd id="meta-players"></dd></div>
-                  <div><dt>Training FEN</dt><dd><code id="meta-fen"></code></dd></div>
                   <div><dt>Lichess</dt><dd><a id="meta-lichess" href="#" target="_blank" rel="noreferrer">Open on Lichess</a></dd></div>
-                  <div><dt>Pending Move</dt><dd id="pending-move">Select a move on the board.</dd></div>
+                  <div><dt>Played in Game</dt><dd id="meta-played-move"></dd></div>
                 </dl>
               </section>
               <section class="info-panel">
-                <h3>Metadata</h3>
+                <h3>Position</h3>
                 <dl>
                   <div><dt>Prompt</dt><dd id="meta-prompt"></dd></div>
                   <div><dt>Opening</dt><dd id="meta-opening"></dd></div>
                   <div><dt>Move Number</dt><dd id="meta-move-number"></dd></div>
+                  <div><dt>Pending Move</dt><dd id="pending-move">Select a move on the board.</dd></div>
+                  <div><dt>Training FEN</dt><dd><code id="meta-fen"></code></dd></div>
                   <div><dt>Source</dt><dd id="meta-source"></dd></div>
                   <div><dt>Tags</dt><dd id="meta-tags"></dd></div>
                   <div><dt>Result</dt><dd id="meta-result"></dd></div>
                 </dl>
               </section>
+              <section id="feedback-panel" class="feedback-panel hidden">
+                <h3>Attempt Result</h3>
+                <dl>
+                  <div><dt>Chosen Move</dt><dd id="feedback-move"></dd></div>
+                  <div><dt>Resulting Eval</dt><dd id="feedback-eval"></dd></div>
+                  <div><dt>Eval Loss</dt><dd id="feedback-loss"></dd></div>
+                  <div><dt>Verdict</dt><dd id="feedback-verdict" class="verdict"></dd></div>
+                </dl>
+              </section>
+              <section id="reveal-panel" class="reveal-panel hidden span-two">
+                <h3>Answer</h3>
+                <dl>
+                  <div><dt>Best Move</dt><dd id="answer-best-move"></dd></div>
+                  <div><dt>Engine PV</dt><dd id="answer-best-pv"></dd></div>
+                  <div><dt>Played in Game</dt><dd id="answer-played-move"></dd></div>
+                  <div><dt>Explanation</dt><dd id="answer-explanation"></dd></div>
+                </dl>
+              </section>
             </div>
           </div>
-          <section id="feedback-panel" class="feedback-panel hidden">
-            <h3>Attempt Result</h3>
-            <dl>
-              <div><dt>Chosen Move</dt><dd id="feedback-move"></dd></div>
-              <div><dt>Resulting Eval</dt><dd id="feedback-eval"></dd></div>
-              <div><dt>Eval Loss</dt><dd id="feedback-loss"></dd></div>
-              <div><dt>Verdict</dt><dd id="feedback-verdict" class="verdict"></dd></div>
-            </dl>
-          </section>
-          <section id="reveal-panel" class="reveal-panel hidden">
-            <h3>Answer</h3>
-            <dl>
-              <div><dt>Best Move</dt><dd id="answer-best-move"></dd></div>
-              <div><dt>Engine PV</dt><dd id="answer-best-pv"></dd></div>
-              <div><dt>Played in Game</dt><dd id="answer-played-move"></dd></div>
-              <div><dt>Explanation</dt><dd id="answer-explanation"></dd></div>
-            </dl>
-          </section>
         </section>
       </main>
     </div>
@@ -558,6 +575,7 @@ def _build_puzzle_viewer_html(
         metaEvent: document.getElementById('meta-event'),
         metaDate: document.getElementById('meta-date'),
         metaPlayers: document.getElementById('meta-players'),
+        metaPlayedMove: document.getElementById('meta-played-move'),
         metaFen: document.getElementById('meta-fen'),
         metaLichess: document.getElementById('meta-lichess'),
         metaPrompt: document.getElementById('meta-prompt'),
@@ -824,6 +842,7 @@ def _build_puzzle_viewer_html(
         elements.metaEvent.textContent = puzzle.event || 'Unknown event';
         elements.metaDate.textContent = puzzle.date || 'Unknown date';
         elements.metaPlayers.textContent = `${puzzle.white || 'White'} vs ${puzzle.black || 'Black'}`;
+        elements.metaPlayedMove.textContent = `${puzzle.played_move_san || 'Unavailable'}${puzzle.played_move_uci ? ` (${puzzle.played_move_uci})` : ''}`;
         elements.metaFen.textContent = puzzle.fen;
         elements.metaLichess.href = puzzle.lichess_url;
         elements.metaPrompt.textContent = puzzle.prompt;

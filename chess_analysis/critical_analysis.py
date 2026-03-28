@@ -19,6 +19,11 @@ class LegalMoveOption:
     resulting_fen: str
     eval_cp: float
     eval_display: str
+    mate: int | None
+    pv_san: str
+    mover_eval_cp: float
+    mover_eval_display: str
+    mover_mate: int | None
     eval_loss_cp: float
     eval_loss_display: str
     grade: str
@@ -118,6 +123,102 @@ def _grade_eval_loss(eval_loss_cp: float) -> str:
     return "Blunder"
 
 
+def _option_rank(option: LegalMoveOption) -> tuple[int, float, float]:
+    if option.mover_mate is not None:
+        if option.mover_mate > 0:
+            return (3, float(-option.mover_mate), float(option.mover_eval_cp))
+        return (1, float(-option.mover_mate), float(option.mover_eval_cp))
+    return (2, float(option.mover_eval_cp), 0.0)
+
+
+def _stable_eval_loss(best_option: LegalMoveOption, option: LegalMoveOption, mate_slower_plies: int = 2) -> float:
+    if option.uci == best_option.uci:
+        return 0.0
+
+    if best_option.mover_mate is not None and best_option.mover_mate > 0:
+        if (
+            option.mover_mate is not None
+            and option.mover_mate > 0
+            and option.mover_mate <= best_option.mover_mate + mate_slower_plies
+        ):
+            return 0.0
+        return 100000.0
+
+    if best_option.mover_mate is not None and best_option.mover_mate < 0:
+        if option.mover_mate is not None and option.mover_mate < 0 and option.mover_mate <= best_option.mover_mate:
+            return 0.0
+        return max(0.0, float(best_option.mover_eval_cp) - float(option.mover_eval_cp))
+
+    if option.mover_mate is not None and option.mover_mate > 0:
+        return 0.0
+
+    return max(0.0, float(best_option.mover_eval_cp) - float(option.mover_eval_cp))
+
+
+def _is_acceptable_alternative(
+    best_option: LegalMoveOption | None,
+    played_option: LegalMoveOption | None,
+    cp_tolerance: int = 30,
+    mate_slower_plies: int = 2,
+) -> bool:
+    if best_option is None or played_option is None:
+        return False
+
+    if played_option.uci == best_option.uci:
+        return True
+
+    if best_option.mover_mate is not None and best_option.mover_mate > 0:
+        return (
+            played_option.mover_mate is not None
+            and played_option.mover_mate > 0
+            and played_option.mover_mate <= best_option.mover_mate + mate_slower_plies
+        )
+
+    if played_option.mover_mate is not None and played_option.mover_mate > 0:
+        return True
+
+    if best_option.mover_mate is None and played_option.mover_mate is None:
+        return (float(best_option.mover_eval_cp) - float(played_option.mover_eval_cp)) <= float(cp_tolerance)
+
+    return False
+
+
+def _is_same_losing_bucket(
+    mover_eval_before_cp: float,
+    eval_loss_cp: float,
+    losing_threshold: int = 500,
+    bucket_threshold: int = 300,
+) -> bool:
+    return mover_eval_before_cp <= -float(losing_threshold) and eval_loss_cp <= float(bucket_threshold)
+
+
+def _is_same_winning_bucket(
+    best_option: LegalMoveOption | None,
+    played_option: LegalMoveOption | None,
+    mover_eval_before_cp: float,
+    mover_eval_after_cp: float,
+    winning_threshold: int = 500,
+    mate_slower_plies: int = 8,
+) -> bool:
+    if mover_eval_before_cp < float(winning_threshold):
+        return False
+
+    if played_option is None:
+        return mover_eval_after_cp >= float(winning_threshold)
+
+    if (
+        best_option is not None
+        and best_option.mover_mate is not None
+        and best_option.mover_mate > 0
+        and played_option.mover_mate is not None
+        and played_option.mover_mate > 0
+        and played_option.mover_mate <= best_option.mover_mate + mate_slower_plies
+    ):
+        return True
+
+    return played_option.mover_eval_cp >= float(winning_threshold)
+
+
 def _pv_to_san(board: chess.Board, pv: list[chess.Move] | None, max_plies: int = 6) -> str:
     if not pv:
         return ""
@@ -137,7 +238,6 @@ def _analyse_legal_moves(
     engine: chess.engine.SimpleEngine,
     board: chess.Board,
     limit: chess.engine.Limit,
-    best_eval_cp: int,
 ) -> list[LegalMoveOption]:
     legal_move_options: list[LegalMoveOption] = []
     for legal_move in list(board.legal_moves):
@@ -156,19 +256,35 @@ def _analyse_legal_moves(
             continue
 
         candidate_summary = _invert_summary(_score_to_summary(candidate_score, candidate_board.turn))
-        eval_loss_cp = max(0, best_eval_cp - candidate_summary.cp)
+        candidate_white_summary = _score_to_summary(candidate_score, chess.WHITE)
+        candidate_pv_san = _pv_to_san(candidate_board, candidate_info.get("pv"), max_plies=5)
         legal_move_options.append(
             LegalMoveOption(
                 uci=legal_move.uci(),
                 san=candidate_san,
                 resulting_fen=candidate_board.fen(),
-                eval_cp=float(candidate_summary.cp),
-                eval_display=candidate_summary.display,
-                eval_loss_cp=float(eval_loss_cp),
-                eval_loss_display=_format_eval_loss_display(eval_loss_cp),
-                grade=_grade_eval_loss(eval_loss_cp),
+                eval_cp=float(candidate_white_summary.cp),
+                eval_display=candidate_white_summary.display,
+                mate=candidate_white_summary.mate,
+                pv_san=f"{candidate_san} {candidate_pv_san}".strip(),
+                mover_eval_cp=float(candidate_summary.cp),
+                mover_eval_display=candidate_summary.display,
+                mover_mate=candidate_summary.mate,
+                eval_loss_cp=0.0,
+                eval_loss_display=_format_eval_loss_display(0.0),
+                grade=_grade_eval_loss(0.0),
             )
         )
+
+    if not legal_move_options:
+        return legal_move_options
+
+    best_option = max(legal_move_options, key=_option_rank)
+    for option in legal_move_options:
+        eval_loss_cp = _stable_eval_loss(best_option, option)
+        option.eval_loss_cp = float(eval_loss_cp)
+        option.eval_loss_display = _format_eval_loss_display(eval_loss_cp)
+        option.grade = _grade_eval_loss(eval_loss_cp)
 
     return legal_move_options
 
@@ -210,12 +326,8 @@ def extract_critical_positions(
                         continue
 
                     pre_summary = _score_to_summary(pre_score, turn_before)
-                    eval_before = pre_summary.cp
-                    pv = pre_info.get("pv")
-                    best_move = board.san(pv[0]) if pv else ""
-                    best_move_uci = pv[0].uci() if pv else ""
-                    best_pv_san = _pv_to_san(board_before, pv)
-
+                    pre_white_summary = _score_to_summary(pre_score, chess.WHITE)
+                    eval_before = float(pre_summary.cp)
                     played_move_san = board.san(move)
                     played_move_uci = move.uci()
                     board.push(move)
@@ -236,12 +348,41 @@ def extract_critical_positions(
                         continue
 
                     played_summary = _invert_summary(_score_to_summary(post_score, board.turn))
+                    played_white_summary = _score_to_summary(post_score, chess.WHITE)
                     eval_after = played_summary.cp
                     swing = eval_before - eval_after
                     mate_related = bool(pre_score.is_mate() or post_score.is_mate())
 
                     if swing >= eval_threshold:
-                        legal_move_options = _analyse_legal_moves(engine, board_before, limit, eval_before)
+                        legal_move_options = _analyse_legal_moves(engine, board_before, limit)
+                        best_option = max(legal_move_options, key=_option_rank) if legal_move_options else None
+                        played_option = next(
+                            (option for option in legal_move_options if option.uci == played_move_uci),
+                            None,
+                        )
+
+                        if _is_acceptable_alternative(best_option, played_option):
+                            continue
+
+                        if best_option is not None:
+                            display_eval_before = best_option.eval_cp
+                            best_move = best_option.san
+                            best_move_uci = best_option.uci
+                            best_pv_san = best_option.pv_san
+                            best_eval_display = best_option.eval_display
+                        else:
+                            display_eval_before = float(pre_white_summary.cp)
+                            pv = pre_info.get("pv")
+                            best_move = board_before.san(pv[0]) if pv else ""
+                            best_move_uci = pv[0].uci() if pv else ""
+                            best_pv_san = _pv_to_san(board_before, pv)
+                            best_eval_display = pre_white_summary.display
+
+                        eval_loss = played_option.eval_loss_cp if played_option is not None else max(0.0, eval_before - eval_after)
+                        if _is_same_losing_bucket(eval_before, eval_loss):
+                            continue
+                        if _is_same_winning_bucket(best_option, played_option, eval_before, eval_after):
+                            continue
                         critical_positions.append(
                             CriticalPosition(
                                 source_file=metadata.source_file,
@@ -259,15 +400,15 @@ def extract_critical_positions(
                                 played_move_uci=played_move_uci,
                                 engine_best_move=best_move,
                                 engine_best_move_uci=best_move_uci,
-                                eval_before=float(eval_before),
-                                eval_after=float(eval_after),
-                                eval_swing=float(swing),
+                                eval_before=float(display_eval_before),
+                                eval_after=float(played_white_summary.cp),
+                                eval_swing=float(eval_loss),
                                 mate_related=mate_related,
                                 eco=metadata.eco,
                                 opening=metadata.opening,
-                                best_eval_display=pre_summary.display,
-                                played_eval_display=played_summary.display,
-                                eval_loss_display=_format_eval_loss_display(swing),
+                                best_eval_display=best_eval_display,
+                                played_eval_display=played_white_summary.display,
+                                eval_loss_display=_format_eval_loss_display(eval_loss),
                                 best_pv_san=best_pv_san,
                                 legal_move_options=legal_move_options,
                             )
