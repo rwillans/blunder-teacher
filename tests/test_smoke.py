@@ -4,7 +4,7 @@ import csv
 import sys
 from pathlib import Path
 
-from chess_analysis.critical_analysis import CriticalPosition, extract_critical_positions
+from chess_analysis.critical_analysis import CriticalPosition, LegalMoveOption, extract_critical_positions
 from chess_analysis.engine_check import EngineCheckResult
 from chess_analysis.pipeline import _filter_player_mistakes_only, run_pipeline
 from chess_analysis.puzzles import assign_prompt_type, build_puzzles
@@ -72,6 +72,34 @@ def _critical(
         mate_related=mate_related,
         eco="C20",
         opening="KP",
+        played_move_uci="d1h5",
+        engine_best_move_uci="g1f3",
+        best_eval_display=f"{eval_before / 100:+.2f}",
+        played_eval_display=f"{eval_after / 100:+.2f}",
+        eval_loss_display=f"{int(eval_before - eval_after)} cp",
+        best_pv_san="Nf3 Nc6",
+        legal_move_options=[
+            LegalMoveOption(
+                uci="g1f3",
+                san="Nf3",
+                resulting_fen="fen-after-best",
+                eval_cp=eval_before,
+                eval_display=f"{eval_before / 100:+.2f}",
+                eval_loss_cp=0.0,
+                eval_loss_display="0 cp",
+                grade="Excellent",
+            ),
+            LegalMoveOption(
+                uci="d1h5",
+                san="Qh5",
+                resulting_fen="fen-after-played",
+                eval_cp=eval_after,
+                eval_display=f"{eval_after / 100:+.2f}",
+                eval_loss_cp=eval_before - eval_after,
+                eval_loss_display=f"{int(eval_before - eval_after)} cp",
+                grade="Blunder" if eval_before - eval_after > 250 else "Mistake",
+            ),
+        ],
     )
 
 
@@ -97,6 +125,8 @@ def test_pipeline_writes_outputs_with_critical_positions_and_puzzles(tmp_path: P
         fieldnames = reader.fieldnames or []
         assert "prompt_type" in fieldnames
         assert "recommended_focus" in fieldnames
+        assert "legal_move_options_json" in fieldnames
+        assert "best_move_uci" in fieldnames
 
 
 def test_default_inputs_directory_when_input_omitted(tmp_path: Path, monkeypatch) -> None:
@@ -246,7 +276,7 @@ def test_summary_report_non_mate_stats_and_puzzle_counts(tmp_path: Path) -> None
     assert "Spot the danger: 1" in text
 
 
-def test_puzzle_report_html_groups_by_prompt_and_opening_with_reveal_button(tmp_path: Path) -> None:
+def test_puzzle_report_html_uses_single_position_viewer_with_filters_and_navigation(tmp_path: Path) -> None:
     puzzles = build_puzzles(
         [
             _critical(150.0, 0.0, False, white="Rob Willans", black="Other", side_to_move="White"),
@@ -263,10 +293,15 @@ def test_puzzle_report_html_groups_by_prompt_and_opening_with_reveal_button(tmp_
     )
     text = html_report.read_text(encoding="utf-8")
 
-    assert "Blunder Teacher v5 Puzzle Report" in text
-    assert "Find the best move" in text
-    assert "Defend accurately" in text
-    assert "Open position on Lichess" in text
-    assert "Reveal best engine move" in text
-    assert "Move 10: Qh5" in text
-    assert "Rob Willans vs Other" in text or "Other vs Rob Willans" in text
+    assert "Blunder Teacher v5 Training Viewer" in text
+    assert 'id="prompt-filter"' in text
+    assert 'id="opening-filter"' in text
+    assert 'id="side-filter"' in text
+    assert "Apply Filters" in text
+    assert "Clear Filters" in text
+    assert "Puzzle 0 of 0" in text
+    assert "Submit Move" in text
+    assert "Reveal Answer" in text
+    assert "No puzzles match the current filters" in text
+    assert "Open on Lichess" in text
+    assert '"legal_move_options"' in text
