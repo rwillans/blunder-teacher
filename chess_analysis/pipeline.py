@@ -17,12 +17,36 @@ from .reporting import (
 )
 
 
+def _filter_player_mistakes_only(
+    critical_positions: list[CriticalPosition],
+    player: str | None,
+    player_mistakes_only: bool,
+) -> list[CriticalPosition]:
+    if not player or not player_mistakes_only:
+        return critical_positions
+
+    normalized_player = player.strip().lower()
+    filtered: list[CriticalPosition] = []
+    for critical in critical_positions:
+        side_to_move = critical.side_to_move.strip().lower()
+        if side_to_move == "white" and critical.white.strip().lower() == normalized_player:
+            filtered.append(critical)
+        elif side_to_move == "black" and critical.black.strip().lower() == normalized_player:
+            filtered.append(critical)
+    return filtered
+
+
 @dataclass
 class PipelineResult:
     records: list[GameRecord]
     critical_positions: list[CriticalPosition]
     puzzles: list[PuzzleRecord]
     engine_result: EngineCheckResult
+    input_path: str
+    player_filter: str | None
+    player_mistakes_only: bool
+    pgn_files: list[str]
+    pgn_file_count: int
     csv_path: str
     critical_csv_path: str
     puzzles_csv_path: str
@@ -33,6 +57,7 @@ def run_pipeline(
     input_path: str,
     output_path: str,
     player: str | None = None,
+    player_mistakes_only: bool = False,
     engine_depth: int = 14,
     eval_threshold: int = 150,
 ) -> PipelineResult:
@@ -51,13 +76,30 @@ def run_pipeline(
         engine_depth=engine_depth,
         eval_threshold=eval_threshold,
     )
+    critical_positions = _filter_player_mistakes_only(
+        critical_positions,
+        player=player,
+        player_mistakes_only=player_mistakes_only,
+    )
 
     puzzles = build_puzzles(critical_positions)
 
     csv_path = str(write_games_summary_csv(output_dir, records))
     critical_csv_path = str(write_critical_positions_csv(output_dir, critical_positions))
     puzzles_csv_path = str(write_puzzles_csv(output_dir, puzzles))
-    report_path = str(write_summary_report_md(output_dir, records, critical_positions, puzzles, engine_result))
+    report_path = str(
+        write_summary_report_md(
+            output_dir,
+            records,
+            critical_positions,
+            puzzles,
+            engine_result,
+            input_path=input_path,
+            player_filter=player,
+            player_mistakes_only=player_mistakes_only and bool(player),
+            pgn_files=[str(p) for p in pgn_files],
+        )
+    )
 
     logging.info("Wrote games summary CSV: %s", csv_path)
     logging.info("Wrote critical positions CSV: %s", critical_csv_path)
@@ -69,6 +111,11 @@ def run_pipeline(
         critical_positions=critical_positions,
         puzzles=puzzles,
         engine_result=engine_result,
+        input_path=input_path,
+        player_filter=player,
+        player_mistakes_only=player_mistakes_only and bool(player),
+        pgn_files=[str(p) for p in pgn_files],
+        pgn_file_count=len(pgn_files),
         csv_path=csv_path,
         critical_csv_path=critical_csv_path,
         puzzles_csv_path=puzzles_csv_path,

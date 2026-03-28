@@ -1,13 +1,16 @@
-# blunder-teacher (v3 pipeline)
+# blunder-teacher (v4 pipeline)
 
-A minimal local chess analysis pipeline for PGN files, with critical-moment extraction.
+A minimal local chess analysis pipeline for PGN files, with critical-moment extraction and puzzle export.
 
-## Features in v3
+## Features in v4
 - Accepts one PGN file or a folder of PGN files.
+- Supports default input directory: if `--input` is omitted, uses `./inputs`.
+- Combines all discovered PGN files in one analysis run.
 - Parses games with `python-chess`.
 - Extracts metadata per game:
   - Event, Site, Date, White, Black, Result, ECO, Opening.
 - Optional player filter via `--player` (case-insensitive exact name match on White/Black).
+- Optional `--player-mistakes-only` mode to keep only the selected player's critical moments/puzzles.
 - Runs a real Stockfish smoke test (`analyse()` from initial position).
 - Performs move-by-move engine analysis and flags critical moments using eval swing thresholding.
 - Exports puzzle-ready records from critical positions with simple rule-based prompt assignment.
@@ -17,8 +20,8 @@ A minimal local chess analysis pipeline for PGN files, with critical-moment extr
 - Writes:
   - `games_summary.csv`
   - `critical_positions.csv`
-  - `summary_report.md`
   - `puzzles.csv`
+  - `summary_report.md`
 
 `critical_positions.csv` includes a `mate_related` column so mate-transition moments can be separated from centipawn-only stats.
 
@@ -38,14 +41,21 @@ pip install -r requirements.txt
 ```
 
 ## Usage
-Analyze all games:
+Default input directory (`./inputs`):
+```bash
+python main.py --output /path/to/output
+```
+
+Explicit input path:
 ```bash
 python main.py --input /path/to/file_or_folder --output /path/to/output
 ```
 
-Analyze games for one player only:
+Optional player-focused run:
 ```bash
+python main.py --output /path/to/output --player "Rob Willans"
 python main.py --input /path/to/file_or_folder --output /path/to/output --player "Rob Willans"
+python main.py --input /path/to/file_or_folder --output /path/to/output --player "Rob Willans" --player-mistakes-only
 ```
 
 Tighter critical detection:
@@ -56,13 +66,14 @@ python main.py --input /path/to/file_or_folder --output /path/to/output --engine
 Optional engine path override:
 ```bash
 export STOCKFISH_PATH=/custom/path/to/stockfish
-python main.py --input /path/to/file_or_folder --output /path/to/output
+python main.py --output /path/to/output
 ```
 
 ## Notes
+- Directory scan is top-level `*.pgn` only (non-recursive).
 - Missing `ECO`/`Opening` tags are treated as blank values.
 - Invalid or malformed PGN sections are handled best-effort.
 - Critical positions capture the board state immediately before the played move.
 - Summary centipawn swing statistics are reported for non-mate critical moments, with mate-related moments counted separately.
-
-- Puzzle prompt types are intentionally simple in v3: `Find the best move`, `Spot the danger`, and `Defend accurately`.
+- Puzzle prompt types are intentionally simple in v4: `Find the best move`, `Spot the danger`, and `Defend accurately`.
+- `--player-mistakes-only` has effect only when `--player` is provided.

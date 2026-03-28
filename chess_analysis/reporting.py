@@ -181,11 +181,16 @@ def write_summary_report_md(
     critical_positions: Iterable[CriticalPosition],
     puzzles: Iterable[PuzzleRecord],
     engine_result: EngineCheckResult,
+    input_path: str,
+    player_filter: str | None,
+    player_mistakes_only: bool,
+    pgn_files: Iterable[str],
 ) -> Path:
     output_file = output_dir / "summary_report.md"
     rows = list(records)
     critical = list(critical_positions)
     puzzle_rows = list(puzzles)
+    source_files = sorted(pgn_files)
 
     players = sorted({name for r in rows for name in (r.white, r.black) if name})
     results = Counter(r.result for r in rows if r.result)
@@ -208,7 +213,12 @@ def write_summary_report_md(
     lines = [
         "# Chess Analysis Summary Report",
         "",
-        f"- Total number of games processed: **{len(rows)}**",
+        f"- Input path used: **{input_path}**",
+        f"- Player filtering applied: **{'Yes' if player_filter else 'No'}**",
+        f"- Player filter value: **{player_filter or 'None'}**",
+        f"- Player-mistakes-only filtering applied: **{'Yes' if player_mistakes_only else 'No'}**",
+        f"- Number of PGN files analysed: **{len(source_files)}**",
+        f"- Total number of games processed (after filtering): **{len(rows)}**",
         f"- Number of critical moments found: **{len(critical)}**",
         f"- Number of mate-related critical moments: **{mate_related_count}**",
         f"- Number of puzzles exported: **{len(puzzle_rows)}**",
@@ -217,8 +227,12 @@ def write_summary_report_md(
         f"- Stockfish detail: `{engine_result.detail}`",
         f"- Games with missing Opening or ECO tags: **{missing_opening_or_eco}**",
         "",
-        "## Players encountered",
+        "## Source files analysed",
     ]
+    lines.extend([f"- {path}" for path in source_files] or ["- None"])
+
+    lines.append("")
+    lines.append("## Players encountered")
     lines.extend([f"- {player}" for player in players] or ["- None"])
 
     lines.append("")
