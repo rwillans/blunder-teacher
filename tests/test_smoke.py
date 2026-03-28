@@ -4,11 +4,18 @@ import csv
 import sys
 from pathlib import Path
 
-from chess_analysis.critical_analysis import CriticalPosition, extract_critical_positions
+from chess_analysis.critical_analysis import (
+    CriticalPosition,
+    LegalMoveOption,
+    _is_acceptable_alternative,
+    _is_same_losing_bucket,
+    _is_same_winning_bucket,
+    extract_critical_positions,
+)
 from chess_analysis.engine_check import EngineCheckResult
 from chess_analysis.pipeline import _filter_player_mistakes_only, run_pipeline
 from chess_analysis.puzzles import assign_prompt_type, build_puzzles
-from chess_analysis.reporting import write_summary_report_md
+from chess_analysis.reporting import write_puzzle_report_html, write_summary_report_md
 from main import main
 
 
@@ -72,6 +79,44 @@ def _critical(
         mate_related=mate_related,
         eco="C20",
         opening="KP",
+        played_move_uci="d1h5",
+        engine_best_move_uci="g1f3",
+        best_eval_display=f"{eval_before / 100:+.2f}",
+        played_eval_display=f"{eval_after / 100:+.2f}",
+        eval_loss_display=f"{int(eval_before - eval_after)} cp",
+        best_pv_san="Nf3 Nc6",
+        legal_move_options=[
+            LegalMoveOption(
+                uci="g1f3",
+                san="Nf3",
+                resulting_fen="fen-after-best",
+                eval_cp=eval_before,
+                eval_display=f"{eval_before / 100:+.2f}",
+                mate=None,
+                pv_san="Nf3 Nc6",
+                mover_eval_cp=eval_before,
+                mover_eval_display=f"{eval_before / 100:+.2f}",
+                mover_mate=None,
+                eval_loss_cp=0.0,
+                eval_loss_display="0 cp",
+                grade="Excellent",
+            ),
+            LegalMoveOption(
+                uci="d1h5",
+                san="Qh5",
+                resulting_fen="fen-after-played",
+                eval_cp=eval_after,
+                eval_display=f"{eval_after / 100:+.2f}",
+                mate=None,
+                pv_san="Qh5 Nc6",
+                mover_eval_cp=eval_after,
+                mover_eval_display=f"{eval_after / 100:+.2f}",
+                mover_mate=None,
+                eval_loss_cp=eval_before - eval_after,
+                eval_loss_display=f"{int(eval_before - eval_after)} cp",
+                grade="Blunder" if eval_before - eval_after > 250 else "Mistake",
+            ),
+        ],
     )
 
 
@@ -86,6 +131,7 @@ def test_pipeline_writes_outputs_with_critical_positions_and_puzzles(tmp_path: P
     assert (out_path / "critical_positions.csv").exists()
     assert (out_path / "summary_report.md").exists()
     assert (out_path / "puzzles.csv").exists()
+    assert (out_path / "puzzles.html").exists()
 
     with (out_path / "critical_positions.csv").open("r", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
@@ -96,6 +142,8 @@ def test_pipeline_writes_outputs_with_critical_positions_and_puzzles(tmp_path: P
         fieldnames = reader.fieldnames or []
         assert "prompt_type" in fieldnames
         assert "recommended_focus" in fieldnames
+        assert "legal_move_options_json" in fieldnames
+        assert "best_move_uci" in fieldnames
 
 
 def test_default_inputs_directory_when_input_omitted(tmp_path: Path, monkeypatch) -> None:
@@ -190,9 +238,48 @@ def test_prompt_assignment_logic() -> None:
     assert assign_prompt_type(_critical(100, -100000, True)) == "Spot the danger"
 
 
+def test_prompt_assignment_logic_for_black_uses_white_oriented_eval() -> None:
+    assert assign_prompt_type(_critical(503, 691, False, side_to_move="Black")) == "Defend accurately"
+
+
 def test_extract_critical_positions_handles_missing_engine() -> None:
     critical = extract_critical_positions([], engine_path="/definitely/missing/stockfish")
     assert critical == []
+
+
+def test_acceptable_alternative_for_near_equal_cp_move() -> None:
+    best = LegalMoveOption("a1a8", "Ra8", "fen1", 120.0, "+1.20", None, "Ra8 Ra7", 120.0, "+1.20", None, 0.0, "0 cp", "Excellent")
+    played = LegalMoveOption("a1a6", "Ra6", "fen2", 98.0, "+0.98", None, "Ra6 Ra7", 98.0, "+0.98", None, 22.0, "22 cp", "Good")
+
+    assert _is_acceptable_alternative(best, played)
+
+
+def test_acceptable_alternative_for_slightly_slower_mate() -> None:
+    best = LegalMoveOption("c5c6", "Rc6", "fen1", 100000.0, "M8", 8, "Rc6 Kb7", 100000.0, "M8", 8, 0.0, "0 cp", "Excellent")
+    played = LegalMoveOption("c5c8", "Rc8+", "fen2", 100000.0, "M10", 10, "Rc8+ Kb7", 100000.0, "M10", 10, 0.0, "0 cp", "Excellent")
+
+    assert _is_acceptable_alternative(best, played)
+
+
+def test_same_losing_bucket_filter_matches_broad_rule() -> None:
+    assert _is_same_losing_bucket(-756.0, 265.0)
+    assert not _is_same_losing_bucket(-499.0, 265.0)
+    assert not _is_same_losing_bucket(-756.0, 301.0)
+
+
+def test_same_winning_bucket_filter_matches_broad_rule() -> None:
+    best = LegalMoveOption("e1e7", "Re7+", "fen1", 790.0, "+7.90", None, "Re7+ Kh6", 790.0, "+7.90", None, 0.0, "0 cp", "Excellent")
+    played = LegalMoveOption("d6d3", "Rd3", "fen2", 550.0, "+5.50", None, "Rd3 Rc2+", 550.0, "+5.50", None, 250.0, "250 cp", "Mistake")
+
+    assert _is_same_winning_bucket(best, played, 790.0, 550.0)
+    assert not _is_same_winning_bucket(best, played, 490.0, 550.0)
+
+
+def test_same_winning_bucket_filter_allows_slower_forced_mate() -> None:
+    best = LegalMoveOption("g3g4", "Kg4", "fen1", 100000.0, "M6", 6, "Kg4 Ke5", 100000.0, "M6", 6, 0.0, "0 cp", "Excellent")
+    played = LegalMoveOption("g3h4", "Kxh4", "fen2", 100000.0, "M13", 13, "Kxh4 Ke5", 100000.0, "M13", 13, 100000.0, "Mate swing", "Blunder")
+
+    assert _is_same_winning_bucket(best, played, 100000.0, 100000.0)
 
 
 def test_pipeline_does_not_crash_when_engine_missing_for_critical(tmp_path: Path, monkeypatch) -> None:
@@ -243,3 +330,35 @@ def test_summary_report_non_mate_stats_and_puzzle_counts(tmp_path: Path) -> None
     assert "Number of mate-related puzzles: **1**" in text
     assert "Find the best move: 1" in text
     assert "Spot the danger: 1" in text
+
+
+def test_puzzle_report_html_uses_single_position_viewer_with_filters_and_navigation(tmp_path: Path) -> None:
+    puzzles = build_puzzles(
+        [
+            _critical(150.0, 0.0, False, white="Rob Willans", black="Other", side_to_move="White"),
+            _critical(-120.0, -250.0, False, white="Other", black="Rob Willans", side_to_move="Black"),
+        ]
+    )
+
+    html_report = write_puzzle_report_html(
+        tmp_path,
+        puzzles,
+        input_path="inputs",
+        player_filter="Rob Willans",
+        player_mistakes_only=True,
+    )
+    text = html_report.read_text(encoding="utf-8")
+
+    assert "Blunder Teacher v5 Training Viewer" in text
+    assert 'id="prompt-filter"' in text
+    assert 'id="opening-filter"' in text
+    assert 'id="side-filter"' in text
+    assert "Apply Filters" in text
+    assert "Clear Filters" in text
+    assert "Puzzle 0 of 0" in text
+    assert "Submit Move" in text
+    assert "Reveal Answer" in text
+    assert "No puzzles match the current filters" in text
+    assert "Open on Lichess" in text
+    assert "Played in Game" in text
+    assert '"legal_move_options"' in text

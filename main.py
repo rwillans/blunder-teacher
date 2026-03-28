@@ -11,7 +11,7 @@ DEFAULT_INPUT_DIR = "inputs"
 
 
 def build_parser() -> argparse.ArgumentParser:
-    parser = argparse.ArgumentParser(description="Local chess PGN analysis tool (v4)")
+    parser = argparse.ArgumentParser(description="Local chess PGN analysis tool (v5)")
     parser.add_argument(
         "--input",
         required=False,
