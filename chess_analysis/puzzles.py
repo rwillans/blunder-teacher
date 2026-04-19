@@ -106,23 +106,146 @@ def _build_tags(critical: CriticalPosition, prompt_type: str) -> list[str]:
     return tags
 
 
-def _build_explanation(critical: CriticalPosition, prompt_type: str) -> str:
-    if prompt_type == "Find the best move":
-        lead = "The position still offered a stronger continuation than the game move."
-    elif prompt_type == "Spot the danger":
-        lead = "The game move missed a critical threat and let the evaluation slide."
-    else:
-        lead = "This position called for precise defence, and the game move made the position harder to hold."
+def _position_label(mover_eval_cp: float) -> str:
+    if mover_eval_cp >= 500:
+        return "winning"
+    if mover_eval_cp >= 150:
+        return "better"
+    if mover_eval_cp > -120:
+        return "roughly level"
+    if mover_eval_cp > -500:
+        return "worse"
+    return "in serious trouble"
 
-    opening_text = critical.opening or "this line"
-    return (
-        f"In {opening_text}, {critical.engine_best_move or 'the engine suggestion'} kept the position at "
-        f"{critical.best_eval_display or f'{critical.eval_before / 100:+.2f}'}, while "
-        f"{critical.played_move or 'the played move'} dropped it to "
-        f"{critical.played_eval_display or f'{critical.eval_after / 100:+.2f}'}. "
-        f"That costs about {critical.eval_loss_display or f'{int(critical.eval_swing)} cp'}. "
-        f"{lead}"
+
+def _severity_label(eval_loss_cp: float) -> str:
+    if eval_loss_cp >= 100000:
+        return "decisive"
+    if eval_loss_cp >= 300:
+        return "major"
+    if eval_loss_cp >= 120:
+        return "serious"
+    if eval_loss_cp >= 50:
+        return "notable"
+    return "small"
+
+
+def _sorted_legal_options(critical: CriticalPosition) -> list[LegalMoveOption]:
+    return sorted(
+        critical.legal_move_options,
+        key=lambda option: (float(option.eval_loss_cp), option.san, option.uci),
     )
+
+
+def _find_played_option(critical: CriticalPosition) -> LegalMoveOption | None:
+    return next(
+        (option for option in critical.legal_move_options if option.uci == critical.played_move_uci),
+        None,
+    )
+
+
+def _find_best_option(critical: CriticalPosition) -> LegalMoveOption | None:
+    return next((option for option in critical.legal_move_options if float(option.eval_loss_cp) == 0.0), None)
+
+
+def _played_rank_text(critical: CriticalPosition) -> str:
+    played_option = _find_played_option(critical)
+    if played_option is None or not critical.legal_move_options:
+        return ""
+
+    ranked = _sorted_legal_options(critical)
+    try:
+        played_rank = next(index for index, option in enumerate(ranked, start=1) if option.uci == played_option.uci)
+    except StopIteration:
+        return ""
+
+    def ordinal(value: int) -> str:
+        if 10 <= value % 100 <= 20:
+            suffix = "th"
+        else:
+            suffix = {1: "st", 2: "nd", 3: "rd"}.get(value % 10, "th")
+        return f"{value}{suffix}"
+
+    total_options = len(ranked)
+    if played_rank == 1:
+        return "It was the engine's top choice."
+    if played_rank == 2 and float(played_option.eval_loss_cp) <= 30.0:
+        return "It was close to the best move, but still second-best."
+    if played_rank == total_options and total_options > 2:
+        return f"It was the worst of the {total_options} legal moves the engine checked."
+    if played_rank > max(3, total_options // 2):
+        return f"It landed only {ordinal(played_rank)} out of {total_options} legal moves."
+    return f"It ranked {ordinal(played_rank)} among {total_options} legal moves."
+
+
+def _best_plan_text(critical: CriticalPosition, best_option: LegalMoveOption | None, prompt_type: str) -> str:
+    best_move = critical.engine_best_move or "the engine move"
+    best_eval = critical.best_eval_display or f"{critical.eval_before / 100:+.2f}"
+
+    if best_option is not None and best_option.mate is not None and best_option.mate > 0:
+        return f"{best_move} was a forcing move: it keeps a mating attack with {best_option.eval_display}."
+
+    if prompt_type == "Defend accurately":
+        return f"{best_move} was the cleanest defensive try, keeping the position around {best_eval}."
+    if prompt_type == "Spot the danger":
+        return f"{best_move} was the critical move, holding the line at about {best_eval}."
+    return f"{best_move} kept the stronger continuation and preserved roughly {best_eval}."
+
+
+def _mistake_text(
+    critical: CriticalPosition,
+    prompt_type: str,
+    mover_eval_after: float,
+    played_option: LegalMoveOption | None,
+) -> str:
+    played_move = critical.played_move or "the game move"
+    played_eval = critical.played_eval_display or f"{critical.eval_after / 100:+.2f}"
+
+    if played_option is not None and played_option.mover_mate is not None and played_option.mover_mate < 0:
+        return f"{played_move} allows a forced mate against the side to move."
+
+    if critical.mate_related and mover_eval_after < 0:
+        return f"{played_move} turns the position into a concrete tactical problem and drops the evaluation to {played_eval}."
+
+    if prompt_type == "Defend accurately":
+        return f"{played_move} failed to stabilise the position and left the side to move on {played_eval}."
+    if prompt_type == "Spot the danger":
+        return f"{played_move} misses the key threat and slides to {played_eval}."
+    return f"{played_move} gives up too much compared with the best line and leaves the position on {played_eval}."
+
+
+def _build_explanation(critical: CriticalPosition, prompt_type: str) -> str:
+    mover_eval_before = _eval_for_side(critical.eval_before, critical.side_to_move)
+    mover_eval_after = _eval_for_side(critical.eval_after, critical.side_to_move)
+    opening_text = critical.opening or "this line"
+    best_option = _find_best_option(critical)
+    played_option = _find_played_option(critical)
+    eval_loss_cp = (
+        float(played_option.eval_loss_cp)
+        if played_option is not None
+        else abs(float(critical.eval_swing))
+    )
+    status_text = _position_label(mover_eval_before)
+    severity_text = _severity_label(eval_loss_cp)
+    rank_text = _played_rank_text(critical)
+    best_plan_text = _best_plan_text(critical, best_option, prompt_type)
+    mistake_text = _mistake_text(critical, prompt_type, mover_eval_after, played_option)
+
+    intro = (
+        f"In {opening_text}, {critical.side_to_move} was {status_text} before the mistake."
+        if critical.side_to_move
+        else f"In {opening_text}, the position was {status_text} before the mistake."
+    )
+
+    swing_text = (
+        f"The swing is about {critical.eval_loss_display or f'{int(eval_loss_cp)} cp'},"
+        f" so this is a {severity_text} error."
+    )
+
+    pv_text = f" A useful engine line is {critical.best_pv_san}." if critical.best_pv_san else ""
+    rank_suffix = f" {rank_text}" if rank_text else ""
+
+    return f"{intro} {best_plan_text} {mistake_text} {swing_text}{rank_suffix}{pv_text}"
 
 
 def build_puzzles(critical_positions: Iterable[CriticalPosition]) -> List[PuzzleRecord]:

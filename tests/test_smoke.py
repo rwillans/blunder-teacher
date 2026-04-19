@@ -15,6 +15,7 @@ from chess_analysis.critical_analysis import (
 from chess_analysis.engine_check import EngineCheckResult
 from chess_analysis.pipeline import _filter_player_mistakes_only, run_pipeline
 from chess_analysis.puzzles import assign_prompt_type, build_puzzles
+from chess_analysis.puzzles import _build_explanation
 from chess_analysis.reporting import write_puzzle_report_html, write_summary_report_md
 from main import main
 
@@ -362,3 +363,66 @@ def test_puzzle_report_html_uses_single_position_viewer_with_filters_and_navigat
     assert "Open on Lichess" in text
     assert "Played in Game" in text
     assert '"legal_move_options"' in text
+
+
+def test_build_explanation_for_find_best_move_mentions_status_rank_and_pv() -> None:
+    critical = _critical(180.0, 10.0, False, side_to_move="White")
+    critical.best_pv_san = "Nf3 Nc6 d4"
+
+    explanation = _build_explanation(critical, "Find the best move")
+
+    assert "White was better before the mistake" in explanation
+    assert "Nf3 kept the stronger continuation" in explanation
+    assert "Qh5 gives up too much" in explanation
+    assert "2nd among 2 legal moves" in explanation
+    assert "A useful engine line is Nf3 Nc6 d4." in explanation
+
+
+def test_build_explanation_for_defence_mentions_pressure_and_worst_move() -> None:
+    critical = _critical(220.0, 520.0, False, side_to_move="Black")
+    critical.played_move = "Qh5??"
+    critical.played_move_san = "Qh5??"
+    critical.played_move_uci = "d1h5"
+    critical.engine_best_move = "Kg7"
+    critical.engine_best_move_uci = "g8g7"
+    critical.best_eval_display = "+2.20"
+    critical.played_eval_display = "+5.20"
+    critical.eval_loss_display = "300 cp"
+    critical.best_pv_san = "Kg7 Qf3"
+    critical.legal_move_options = [
+        LegalMoveOption("g8g7", "Kg7", "fen-1", 220.0, "+2.20", None, "Kg7 Qf3", -220.0, "-2.20", None, 0.0, "0 cp", "Excellent"),
+        LegalMoveOption("f8e7", "Be7", "fen-2", 120.0, "+1.20", None, "Be7 Qf3", -120.0, "-1.20", None, 100.0, "100 cp", "Inaccuracy"),
+        LegalMoveOption("d1h5", "Qh5??", "fen-3", 520.0, "+5.20", None, "Qh5?? Qxh5", -520.0, "-5.20", None, 300.0, "300 cp", "Blunder"),
+    ]
+
+    explanation = _build_explanation(critical, "Defend accurately")
+
+    assert "Black was worse before the mistake" in explanation
+    assert "Kg7 was the cleanest defensive try" in explanation
+    assert "Qh5?? failed to stabilise the position" in explanation
+    assert "major error" in explanation
+    assert "worst of the 3 legal moves" in explanation
+
+
+def test_build_explanation_for_mate_related_position_mentions_forced_mate() -> None:
+    critical = _critical(100000.0, -100000.0, True, side_to_move="White")
+    critical.engine_best_move = "Qg7#"
+    critical.engine_best_move_uci = "g6g7"
+    critical.best_eval_display = "M1"
+    critical.played_move = "Qh6??"
+    critical.played_move_san = "Qh6??"
+    critical.played_move_uci = "g6h6"
+    critical.played_eval_display = "-M2"
+    critical.eval_loss_display = "Mate swing"
+    critical.best_pv_san = "Qg7#"
+    critical.legal_move_options = [
+        LegalMoveOption("g6g7", "Qg7#", "fen-best", 100000.0, "M1", 1, "Qg7#", 100000.0, "M1", 1, 0.0, "0 cp", "Excellent"),
+        LegalMoveOption("g6h6", "Qh6??", "fen-played", -100000.0, "-M2", -2, "Qh6?? Kf7", -100000.0, "-M2", -2, 100000.0, "Mate swing", "Blunder"),
+    ]
+
+    explanation = _build_explanation(critical, "Spot the danger")
+
+    assert "White was winning before the mistake" in explanation
+    assert "Qg7# was a forcing move" in explanation
+    assert "Qh6?? allows a forced mate" in explanation
+    assert "decisive error" in explanation
