@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import csv
+import json
 import sys
 from pathlib import Path
 
@@ -16,7 +17,13 @@ from chess_analysis.engine_check import EngineCheckResult
 from chess_analysis.pipeline import _filter_player_mistakes_only, run_pipeline
 from chess_analysis.puzzles import assign_prompt_type, build_puzzles
 from chess_analysis.puzzles import _build_explanation
-from chess_analysis.reporting import write_puzzle_report_html, write_summary_report_md
+from chess_analysis.reporting import (
+    build_puzzle_payload,
+    write_puzzle_report_html,
+    write_puzzles_json,
+    write_summary_report_md,
+    write_web_public_puzzles_json,
+)
 from main import main
 
 
@@ -132,7 +139,10 @@ def test_pipeline_writes_outputs_with_critical_positions_and_puzzles(tmp_path: P
     assert (out_path / "critical_positions.csv").exists()
     assert (out_path / "summary_report.md").exists()
     assert (out_path / "puzzles.csv").exists()
+    assert (out_path / "puzzles.json").exists()
     assert (out_path / "puzzles.html").exists()
+    assert (out_path / "pieces" / "cburnett" / "wK.svg").exists()
+    assert (out_path / "pieces" / "cburnett" / "license.txt").exists()
 
     with (out_path / "critical_positions.csv").open("r", encoding="utf-8") as handle:
         reader = csv.DictReader(handle)
@@ -363,6 +373,59 @@ def test_puzzle_report_html_uses_single_position_viewer_with_filters_and_navigat
     assert "Open on Lichess" in text
     assert "Played in Game" in text
     assert '"legal_move_options"' in text
+    assert "renderPieceImage" in text
+    assert "pieces/cburnett/wK.svg" in text
+    assert "const nameMap = { k: 'king'" in text
+    assert "const nameMap = {{ k: 'king'" not in text
+    assert 'class="board-frame"' in text
+    assert "♔" not in text
+
+
+def test_write_puzzles_json_exports_frontend_friendly_payload(tmp_path: Path) -> None:
+    puzzles = build_puzzles(
+        [
+            _critical(150.0, 0.0, False, white="Rob Willans", black="Other", side_to_move="White"),
+        ]
+    )
+
+    json_path = write_puzzles_json(tmp_path, puzzles)
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+
+    assert json_path.name == "puzzles.json"
+    assert len(payload) == 1
+    assert payload[0]["id"] == puzzles[0].puzzle_id
+    assert payload[0]["fen"] == puzzles[0].fen
+    assert payload[0]["best_move_uci"] == puzzles[0].best_move_uci
+    assert "legal_move_options" in payload[0]
+
+
+def test_build_puzzle_payload_matches_json_shape() -> None:
+    puzzles = build_puzzles(
+        [
+            _critical(150.0, 0.0, False, white="Rob Willans", black="Other", side_to_move="White"),
+        ]
+    )
+
+    payload = build_puzzle_payload(puzzles)
+
+    assert payload[0]["id"] == puzzles[0].puzzle_id
+    assert payload[0]["opening"] == puzzles[0].opening
+    assert payload[0]["legal_move_options"]
+
+
+def test_write_web_public_puzzles_json_syncs_payload_when_web_dir_exists(tmp_path: Path) -> None:
+    puzzles = build_puzzles(
+        [
+            _critical(150.0, 0.0, False, white="Rob Willans", black="Other", side_to_move="White"),
+        ]
+    )
+    (tmp_path / "web").mkdir()
+
+    json_path = write_web_public_puzzles_json(tmp_path, puzzles)
+
+    assert json_path == tmp_path / "web" / "public" / "puzzles.json"
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload[0]["id"] == puzzles[0].puzzle_id
 
 
 def test_build_explanation_for_find_best_move_mentions_status_rank_and_pv() -> None:

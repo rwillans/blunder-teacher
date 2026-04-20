@@ -22,12 +22,15 @@ A minimal local chess analysis pipeline for PGN files, with critical-moment extr
   - `games_summary.csv`
   - `critical_positions.csv`
   - `puzzles.csv`
+  - `puzzles.json`
   - `puzzles.html`
   - `summary_report.md`
 
 `critical_positions.csv` includes a `mate_related` column so mate-transition moments can be separated from centipawn-only stats.
 
 `puzzles.csv` now carries richer training metadata, including Lichess links, best/played move details, precomputed eval data, explanation text, and serialized legal-move grading data for the local viewer.
+
+`puzzles.json` exposes the same puzzle payload in a frontend-friendly shape so a dedicated web client can render the trainer without being tied to the generated HTML file.
 
 ## Requirements
 - Python 3.10+
@@ -66,6 +69,15 @@ python main.py --input /path/to/file_or_folder --output /path/to/output
 # then open /path/to/output/puzzles.html in your browser
 ```
 
+Try the React viewer with the same run:
+```bash
+python main.py --input /path/to/file_or_folder --output /path/to/output
+# this also syncs fresh puzzle data to web/public/puzzles.json
+cd web
+npm install
+npm run dev
+```
+
 Tighter critical detection:
 ```bash
 python main.py --input /path/to/file_or_folder --output /path/to/output --engine-depth 16 --eval-threshold 200
@@ -76,6 +88,12 @@ Optional engine path override:
 export STOCKFISH_PATH=/custom/path/to/stockfish
 python main.py --output /path/to/output
 ```
+
+## Web Foundation
+
+The repo now includes a starter React/Vite frontend in [web/README.md](/D:/positron_projects/blunder-teacher/web/README.md) that loads puzzle data from `puzzles.json` and renders it through a dedicated chessboard component boundary. Each pipeline run now also syncs the latest puzzle payload into `web/public/puzzles.json`, so the React app can usually be started right after analysis without any manual file copy step.
+
+The generated HTML viewer now copies the classic Cburnett SVG piece assets into the output folder as `pieces/cburnett/`, so `puzzles.html` and the React viewer can share the same piece style.
 
 ## Notes
 - Directory scan is top-level `*.pgn` only (non-recursive).

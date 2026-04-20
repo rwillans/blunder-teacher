@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import csv
 import json
+import shutil
 from collections import Counter
 from dataclasses import asdict
 from pathlib import Path
@@ -183,8 +184,8 @@ def write_puzzles_csv(output_dir: Path, puzzles: Iterable[PuzzleRecord]) -> Path
     return output_file
 
 
-def _serialize_puzzles(puzzles: list[PuzzleRecord]) -> str:
-    payload = []
+def build_puzzle_payload(puzzles: list[PuzzleRecord]) -> list[dict[str, object]]:
+    payload: list[dict[str, object]] = []
     for puzzle in puzzles:
         payload.append(
             {
@@ -222,7 +223,45 @@ def _serialize_puzzles(puzzles: list[PuzzleRecord]) -> str:
                 "legal_move_options": [asdict(option) for option in puzzle.legal_move_options],
             }
         )
+    return payload
+
+
+def _serialize_puzzles(payload: list[dict[str, object]]) -> str:
     return json.dumps(payload, ensure_ascii=True).replace("</", "<\\/")
+
+
+def _write_puzzle_payload_file(output_file: Path, puzzles: Iterable[PuzzleRecord]) -> Path:
+    puzzle_rows = list(puzzles)
+    payload = build_puzzle_payload(puzzle_rows)
+    output_file.write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+    return output_file
+
+
+def write_puzzles_json(output_dir: Path, puzzles: Iterable[PuzzleRecord]) -> Path:
+    return _write_puzzle_payload_file(output_dir / "puzzles.json", puzzles)
+
+
+def write_web_public_puzzles_json(project_root: Path, puzzles: Iterable[PuzzleRecord]) -> Path | None:
+    web_dir = project_root / "web"
+    if not web_dir.exists():
+        return None
+
+    public_dir = web_dir / "public"
+    public_dir.mkdir(parents=True, exist_ok=True)
+    return _write_puzzle_payload_file(public_dir / "puzzles.json", puzzles)
+
+
+def write_cburnett_assets(output_dir: Path, project_root: Path) -> Path | None:
+    source_dir = project_root / "web" / "public" / "pieces" / "cburnett"
+    if not source_dir.exists():
+        return None
+
+    target_dir = output_dir / "pieces" / "cburnett"
+    target_dir.mkdir(parents=True, exist_ok=True)
+    for asset_path in source_dir.iterdir():
+        if asset_path.is_file():
+            shutil.copy2(asset_path, target_dir / asset_path.name)
+    return target_dir
 
 
 def _build_puzzle_viewer_html(
@@ -351,24 +390,51 @@ def _build_puzzle_viewer_html(
       }}
       .eval-fill {{ position: absolute; left: 0; right: 0; bottom: 0; background: #0f172a; }}
       .eval-label, code {{ font-family: "Cascadia Code", Consolas, monospace; }}
+      .board-frame {{
+        padding: 18px;
+        border-radius: 24px;
+        background:
+          radial-gradient(circle at top, rgba(255, 250, 243, 0.92), rgba(229, 213, 193, 0.74) 66%, rgba(168, 118, 63, 0.22)),
+          linear-gradient(145deg, rgba(255, 253, 249, 0.96), rgba(219, 202, 181, 0.82));
+        border: 1px solid rgba(120, 86, 51, 0.22);
+        box-shadow:
+          inset 0 1px 0 rgba(255, 255, 255, 0.65),
+          0 28px 60px rgba(29, 20, 11, 0.14);
+      }}
       .board {{
         display: grid;
         grid-template-columns: repeat(8, minmax(42px, 64px));
-        border: 1px solid var(--border);
-        border-radius: 14px;
+        border: 1px solid rgba(88, 63, 38, 0.18);
+        border-radius: 18px;
         overflow: hidden;
+        box-shadow:
+          inset 0 0 0 1px rgba(255, 255, 255, 0.32),
+          0 12px 24px rgba(48, 34, 23, 0.16);
       }}
       .square {{
         aspect-ratio: 1;
         border: 0;
         border-radius: 0;
         padding: 0;
-        font-size: clamp(26px, 3vw, 40px);
+        display: grid;
+        place-items: center;
+        position: relative;
+      }}
+      .light {{ background: linear-gradient(180deg, #f5e4c5 0%, #edd2ab 100%); }}
+      .dark {{ background: linear-gradient(180deg, #b57c45 0%, #8d5a2d 100%); }}
+      .piece-shell {{
+        width: 100%;
+        height: 100%;
+        padding: 7%;
         display: grid;
         place-items: center;
       }}
-      .light {{ background: var(--light-square); }}
-      .dark {{ background: var(--dark-square); }}
+      .piece-image {{
+        width: 100%;
+        height: 100%;
+        object-fit: contain;
+        filter: drop-shadow(0 5px 6px rgba(38, 25, 14, 0.18));
+      }}
       .square.selected {{ box-shadow: inset 0 0 0 4px rgba(21, 94, 239, 0.65); }}
       .square.target {{ box-shadow: inset 0 0 0 999px var(--highlight); }}
       .square.submitted {{ box-shadow: inset 0 0 0 4px rgba(28, 143, 82, 0.5); }}
@@ -410,6 +476,7 @@ def _build_puzzle_viewer_html(
         .details-grid {{ grid-template-columns: 1fr; }}
         .eval-bar {{ height: 220px; }}
         .board {{ grid-template-columns: repeat(8, minmax(34px, 1fr)); width: 100%; }}
+        .board-frame {{ padding: 12px; }}
       }}
     </style>
   </head>
@@ -485,7 +552,9 @@ def _build_puzzle_viewer_html(
                 <div class="subtle">Eval</div>
               </div>
               <div>
-                <div id="board" class="board" aria-label="Local chessboard"></div>
+                <div class="board-frame">
+                  <div id="board" class="board" aria-label="Local chessboard"></div>
+                </div>
                 <div id="board-caption" class="board-caption"></div>
               </div>
             </div>
@@ -537,8 +606,21 @@ def _build_puzzle_viewer_html(
       </main>
     </div>
     <script>
-      const PIECES = {{ p: '♟', r: '♜', n: '♞', b: '♝', q: '♛', k: '♚', P: '♙', R: '♖', N: '♘', B: '♗', Q: '♕', K: '♔' }};
       const FILES = ['a', 'b', 'c', 'd', 'e', 'f', 'g', 'h'];
+      const PIECE_FILES = {{
+        K: 'pieces/cburnett/wK.svg',
+        Q: 'pieces/cburnett/wQ.svg',
+        R: 'pieces/cburnett/wR.svg',
+        B: 'pieces/cburnett/wB.svg',
+        N: 'pieces/cburnett/wN.svg',
+        P: 'pieces/cburnett/wP.svg',
+        k: 'pieces/cburnett/bK.svg',
+        q: 'pieces/cburnett/bQ.svg',
+        r: 'pieces/cburnett/bR.svg',
+        b: 'pieces/cburnett/bB.svg',
+        n: 'pieces/cburnett/bN.svg',
+        p: 'pieces/cburnett/bP.svg'
+      }};
       const puzzles = {payload_json};
 """,
         """
@@ -652,6 +734,21 @@ def _build_puzzle_viewer_html(
         return boardMap;
       }
 
+      function renderPieceImage(piece) {
+        if (!piece) return '';
+        const src = PIECE_FILES[piece];
+        if (!src) return '';
+        const color = piece === piece.toUpperCase() ? 'white' : 'black';
+        const nameMap = { k: 'king', q: 'queen', r: 'rook', b: 'bishop', n: 'knight', p: 'pawn' };
+        const alt = `${color} ${nameMap[piece.toLowerCase()]}`;
+
+        return `
+          <span class="piece-shell" aria-hidden="true">
+            <img src="${src}" alt="${alt}" class="piece-image" draggable="false" />
+          </span>
+        `;
+      }
+
       function squareOrder(sideToMove) {
         const files = sideToMove === 'Black' ? [...FILES].reverse() : FILES;
         const ranks = sideToMove === 'Black' ? [1, 2, 3, 4, 5, 6, 7, 8] : [8, 7, 6, 5, 4, 3, 2, 1];
@@ -699,7 +796,7 @@ def _build_puzzle_viewer_html(
           button.type = 'button';
           button.className = ['square', dark ? 'dark' : 'light'].join(' ');
           button.dataset.square = square;
-          button.textContent = PIECES[boardMap[square]] || '';
+          button.innerHTML = renderPieceImage(boardMap[square]);
           if (selectedSource === square) button.classList.add('selected');
           if (targetSquares.includes(square)) button.classList.add('target');
           if (currentMove && (currentMove.uci.startsWith(square) || currentMove.uci.slice(2, 4) === square)) {
@@ -937,7 +1034,7 @@ def write_puzzle_report_html(
 ) -> Path:
     output_file = output_dir / "puzzles.html"
     puzzle_rows = list(puzzles)
-    payload_json = _serialize_puzzles(puzzle_rows)
+    payload_json = _serialize_puzzles(build_puzzle_payload(puzzle_rows))
     player_filter_text = player_filter or "None"
     mistakes_only_text = "Yes" if player_mistakes_only else "No"
     body = _build_puzzle_viewer_html(

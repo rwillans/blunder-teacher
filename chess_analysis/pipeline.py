@@ -3,6 +3,7 @@ from __future__ import annotations
 import logging
 import os
 from dataclasses import dataclass
+from pathlib import Path
 
 from .critical_analysis import CriticalPosition, extract_critical_positions
 from .engine_check import DEFAULT_STOCKFISH_PATH, EngineCheckResult, run_stockfish_smoke_test
@@ -11,9 +12,12 @@ from .pgn_parser import GameRecord, parse_pgn_files
 from .puzzles import PuzzleRecord, build_puzzles
 from .reporting import (
     write_critical_positions_csv,
+    write_cburnett_assets,
     write_games_summary_csv,
+    write_puzzles_json,
     write_puzzle_report_html,
     write_puzzles_csv,
+    write_web_public_puzzles_json,
     write_summary_report_md,
 )
 
@@ -51,6 +55,8 @@ class PipelineResult:
     csv_path: str
     critical_csv_path: str
     puzzles_csv_path: str
+    puzzles_json_path: str
+    web_puzzles_json_path: str | None
     puzzle_html_path: str
     report_path: str
 
@@ -89,6 +95,10 @@ def run_pipeline(
     csv_path = str(write_games_summary_csv(output_dir, records))
     critical_csv_path = str(write_critical_positions_csv(output_dir, critical_positions))
     puzzles_csv_path = str(write_puzzles_csv(output_dir, puzzles))
+    puzzles_json_path = str(write_puzzles_json(output_dir, puzzles))
+    project_root = Path(__file__).resolve().parent.parent
+    web_puzzles_json = write_web_public_puzzles_json(project_root, puzzles)
+    piece_assets_dir = write_cburnett_assets(output_dir, project_root)
     puzzle_html_path = str(
         write_puzzle_report_html(
             output_dir,
@@ -115,6 +125,11 @@ def run_pipeline(
     logging.info("Wrote games summary CSV: %s", csv_path)
     logging.info("Wrote critical positions CSV: %s", critical_csv_path)
     logging.info("Wrote puzzles CSV: %s", puzzles_csv_path)
+    logging.info("Wrote puzzles JSON: %s", puzzles_json_path)
+    if web_puzzles_json is not None:
+        logging.info("Synced puzzles JSON for web viewer: %s", web_puzzles_json)
+    if piece_assets_dir is not None:
+        logging.info("Copied Cburnett piece assets: %s", piece_assets_dir)
     logging.info("Wrote puzzle HTML report: %s", puzzle_html_path)
     logging.info("Wrote summary report: %s", report_path)
 
@@ -131,6 +146,8 @@ def run_pipeline(
         csv_path=csv_path,
         critical_csv_path=critical_csv_path,
         puzzles_csv_path=puzzles_csv_path,
+        puzzles_json_path=puzzles_json_path,
+        web_puzzles_json_path=str(web_puzzles_json) if web_puzzles_json is not None else None,
         puzzle_html_path=puzzle_html_path,
         report_path=report_path,
     )
