@@ -19,6 +19,7 @@ def build_puzzle_payload(puzzles: list[PuzzleRecord]) -> list[dict[str, object]]
                 "move_number": puzzle.move_number,
                 "prompt": puzzle.prompt,
                 "puzzle_prompt_type": puzzle.puzzle_prompt_type or puzzle.prompt_type,
+                "puzzle_theme": puzzle.puzzle_theme,
                 "opening": puzzle.opening or "Unknown Opening",
                 "recommended_focus": puzzle.recommended_focus,
                 "event": puzzle.event,

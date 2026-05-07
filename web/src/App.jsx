@@ -26,6 +26,27 @@ function uniqueSorted(values) {
   return [...new Set(values.filter(Boolean))].sort((left, right) => left.localeCompare(right));
 }
 
+function countThemes(puzzles) {
+  const counts = {};
+  for (const puzzle of puzzles) {
+    const tags = Array.isArray(puzzle.tags) ? uniqueSorted(puzzle.tags) : [];
+    for (const tag of tags) {
+      counts[tag] = (counts[tag] || 0) + 1;
+    }
+  }
+  return counts;
+}
+
+function countValues(values) {
+  const counts = {};
+  for (const value of values) {
+    if (value) {
+      counts[value] = (counts[value] || 0) + 1;
+    }
+  }
+  return counts;
+}
+
 export default function App() {
   const [status, setStatus] = useState("loading");
   const [errorMessage, setErrorMessage] = useState("");
@@ -33,7 +54,7 @@ export default function App() {
   const [puzzleStates, setPuzzleStates] = useState({});
   const [cursor, setCursor] = useState(0);
   const [filters, setFilters] = useState({
-    promptType: "",
+    theme: "",
     opening: "",
     sideToMove: "",
   });
@@ -74,7 +95,8 @@ export default function App() {
   }, []);
 
   const filteredPuzzles = puzzles.filter((puzzle) => {
-    if (filters.promptType && puzzle.puzzle_prompt_type !== filters.promptType) {
+    const tags = Array.isArray(puzzle.tags) ? puzzle.tags : [];
+    if (filters.theme && !tags.includes(filters.theme)) {
       return false;
     }
     if (filters.opening && puzzle.opening !== filters.opening) {
@@ -89,8 +111,11 @@ export default function App() {
   const safeCursor = filteredPuzzles.length === 0 ? 0 : Math.min(cursor, filteredPuzzles.length - 1);
   const currentPuzzle = filteredPuzzles[safeCursor] || null;
   const currentPuzzleState = currentPuzzle ? puzzleStates[currentPuzzle.id] : null;
-  const promptTypes = uniqueSorted(puzzles.map((puzzle) => puzzle.puzzle_prompt_type));
+  const themes = uniqueSorted(puzzles.flatMap((puzzle) => (Array.isArray(puzzle.tags) ? puzzle.tags : [])));
+  const themeCounts = countThemes(puzzles);
   const openings = uniqueSorted(puzzles.map((puzzle) => puzzle.opening));
+  const openingCounts = countValues(puzzles.map((puzzle) => puzzle.opening));
+  const sideToMoveCounts = countValues(puzzles.map((puzzle) => puzzle.side_to_move));
   const activeFilterCount = Object.values(filters).filter(Boolean).length;
 
   function updateCurrentPuzzleState(mutator) {
@@ -117,7 +142,7 @@ export default function App() {
 
   function clearFilters() {
     setFilters({
-      promptType: "",
+      theme: "",
       opening: "",
       sideToMove: "",
     });
@@ -185,8 +210,8 @@ export default function App() {
               <strong>{openings.length}</strong>
             </div>
             <div className="stat-card">
-              <span className="stat-label">Prompt types</span>
-              <strong>{promptTypes.length}</strong>
+              <span className="stat-label">Themes</span>
+              <strong>{themes.length}</strong>
             </div>
           </div>
         </section>
@@ -198,14 +223,14 @@ export default function App() {
               Clear all
             </button>
           </div>
-          <p className="small-print">Narrow the training set by question type, opening, or side to move.</p>
+          <p className="small-print">Narrow the training set by theme, opening, or side to move.</p>
           <label>
-            <span>Prompt type</span>
-            <select value={filters.promptType} onChange={(event) => handleFilterChange("promptType", event.target.value)}>
+            <span>Theme</span>
+            <select value={filters.theme} onChange={(event) => handleFilterChange("theme", event.target.value)}>
               <option value="">Any</option>
-              {promptTypes.map((promptType) => (
-                <option key={promptType} value={promptType}>
-                  {promptType}
+              {themes.map((theme) => (
+                <option key={theme} value={theme}>
+                  {theme} [{themeCounts[theme] || 0}]
                 </option>
               ))}
             </select>
@@ -217,7 +242,7 @@ export default function App() {
               <option value="">Any</option>
               {openings.map((opening) => (
                 <option key={opening} value={opening}>
-                  {opening}
+                  {opening} [{openingCounts[opening] || 0}]
                 </option>
               ))}
             </select>
@@ -227,8 +252,8 @@ export default function App() {
             <span>Side to move</span>
             <select value={filters.sideToMove} onChange={(event) => handleFilterChange("sideToMove", event.target.value)}>
               <option value="">Any</option>
-              <option value="White">White</option>
-              <option value="Black">Black</option>
+              <option value="White">White [{sideToMoveCounts.White || 0}]</option>
+              <option value="Black">Black [{sideToMoveCounts.Black || 0}]</option>
             </select>
           </label>
         </section>

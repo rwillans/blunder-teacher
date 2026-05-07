@@ -13,14 +13,14 @@ A local chess analysis pipeline for PGN files that extracts critical moments and
 - Optional `--player-mistakes-only` mode to keep only the selected player's critical moments/puzzles.
 - Runs a real Stockfish smoke test (`analyse()` from initial position).
 - Performs move-by-move engine analysis and flags critical moments using eval swing thresholding.
-- Exports puzzle-ready records from critical positions with simple rule-based prompt assignment.
+- Exports puzzle-ready records from critical positions with instructional prompt categories and Lichess-style theme tags.
 - Configurable analysis settings:
   - `--engine-depth` (default: 14)
   - `--eval-threshold` in centipawns (default: 150)
 - Default output:
   - `puzzles.json`
 
-`puzzles.json` carries the full frontend-friendly puzzle payload, including Lichess links, best and played move details, explanation text, tags, and precomputed legal-move grading data for the trainer.
+`puzzles.json` carries the full frontend-friendly puzzle payload, including Lichess links, best and played move details, explanation text, a primary theme, theme tags, and precomputed legal-move grading data for the trainer.
 
 ## Requirements
 - Python 3.10+
@@ -88,6 +88,6 @@ The repo includes a React/Vite frontend in [web/README.md](/D:/positron_projects
 - Missing `ECO`/`Opening` tags are treated as blank values.
 - Invalid or malformed PGN sections are handled best-effort.
 - Critical positions capture the board state immediately before the played move.
-- Puzzle prompt types are intentionally simple in v5: `Find the best move`, `Spot the danger`, and `Defend accurately`.
+- Puzzle prompt types are instructional labels, while `tags` are the Lichess-style study themes used by the trainer filter.
 - `--player-mistakes-only` has effect only when `--player` is provided.
 - Precomputing every legal move for each critical position increases analysis cost roughly in proportion to the number of legal moves in those positions, but it keeps the viewer deterministic and offline-friendly.

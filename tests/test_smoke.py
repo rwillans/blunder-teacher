@@ -4,6 +4,8 @@ import json
 import sys
 from pathlib import Path
 
+import chess
+
 from chess_analysis.critical_analysis import (
     CriticalPosition,
     LegalMoveOption,
@@ -13,7 +15,7 @@ from chess_analysis.critical_analysis import (
     extract_critical_positions,
 )
 from chess_analysis.pipeline import _filter_player_mistakes_only, run_pipeline
-from chess_analysis.puzzles import assign_prompt_type, build_puzzles
+from chess_analysis.puzzles import assign_prompt_type, assign_puzzle_theme, assign_puzzle_themes, build_puzzles
 from chess_analysis.puzzles import _build_prompt_hint
 from chess_analysis.puzzles import _build_explanation
 from chess_analysis.reporting import (
@@ -125,6 +127,94 @@ def _critical(
     )
 
 
+def _eval_display(cp: float, mate: int | None = None) -> str:
+    if mate is not None:
+        return f"{'-' if mate < 0 else ''}M{abs(mate)}"
+    return f"{cp / 100:+.2f}"
+
+
+def _option_from_board(
+    board: chess.Board,
+    move_uci: str,
+    mover_eval_cp: float,
+    eval_loss_cp: float,
+    grade: str = "Excellent",
+    mover_mate: int | None = None,
+) -> LegalMoveOption:
+    move = chess.Move.from_uci(move_uci)
+    san = board.san(move)
+    result_board = board.copy(stack=False)
+    result_board.push(move)
+    white_eval_cp = mover_eval_cp if board.turn == chess.WHITE else -mover_eval_cp
+    white_mate = mover_mate if board.turn == chess.WHITE else (-mover_mate if mover_mate is not None else None)
+    return LegalMoveOption(
+        uci=move_uci,
+        san=san,
+        resulting_fen=result_board.fen(),
+        eval_cp=white_eval_cp,
+        eval_display=_eval_display(white_eval_cp, white_mate),
+        mate=white_mate,
+        pv_san=san,
+        mover_eval_cp=mover_eval_cp,
+        mover_eval_display=_eval_display(mover_eval_cp, mover_mate),
+        mover_mate=mover_mate,
+        eval_loss_cp=eval_loss_cp,
+        eval_loss_display="Mate swing" if eval_loss_cp >= 100000 else f"{int(eval_loss_cp)} cp",
+        grade=grade,
+    )
+
+
+def _critical_from_position(
+    fen: str,
+    best_uci: str,
+    played_uci: str,
+    best_mover_eval: float = 250.0,
+    played_mover_eval: float = 0.0,
+    eval_loss: float = 250.0,
+    best_mover_mate: int | None = None,
+    played_mover_mate: int | None = None,
+    mate_related: bool = False,
+) -> CriticalPosition:
+    board = chess.Board(fen)
+    best_option = _option_from_board(board, best_uci, best_mover_eval, 0.0, mover_mate=best_mover_mate)
+    played_option = _option_from_board(
+        board,
+        played_uci,
+        played_mover_eval,
+        eval_loss,
+        grade="Blunder" if eval_loss > 250 else "Mistake",
+        mover_mate=played_mover_mate,
+    )
+    return CriticalPosition(
+        source_file="a.pgn",
+        game_index=1,
+        event="E",
+        site="S",
+        date="2024.01.01",
+        white="W",
+        black="B",
+        result="1-0",
+        move_number=22,
+        side_to_move="White" if board.turn == chess.WHITE else "Black",
+        fen=fen,
+        played_move=played_option.san,
+        engine_best_move=best_option.san,
+        eval_before=best_option.eval_cp,
+        eval_after=played_option.eval_cp,
+        eval_swing=eval_loss,
+        mate_related=mate_related or best_mover_mate is not None or played_mover_mate is not None,
+        eco="C20",
+        opening="KP",
+        played_move_uci=played_uci,
+        engine_best_move_uci=best_uci,
+        best_eval_display=best_option.eval_display,
+        played_eval_display=played_option.eval_display,
+        eval_loss_display=played_option.eval_loss_display,
+        best_pv_san=best_option.pv_san,
+        legal_move_options=[best_option, played_option],
+    )
+
+
 def test_pipeline_writes_web_first_puzzle_payload_by_default(tmp_path: Path) -> None:
     pgn_path = tmp_path / "sample.pgn"
     out_path = tmp_path / "out"
@@ -228,14 +318,98 @@ def test_player_mistakes_filter_propagates_to_csv_and_puzzles(tmp_path: Path, mo
 
 
 def test_prompt_assignment_logic() -> None:
-    assert assign_prompt_type(_critical(80, -100, False)) == "Spot the danger"
+    assert assign_prompt_type(_critical(80, -100, False)) == "Equalise"
     assert assign_prompt_type(_critical(-120, -150, False)) == "Defend accurately"
-    assert assign_prompt_type(_critical(50, 0, False)) == "Find the best move"
-    assert assign_prompt_type(_critical(100, -100000, True)) == "Spot the danger"
+    assert assign_prompt_type(_critical(50, 0, False)) == "Find the best continuation"
+    assert assign_prompt_type(_critical(100, -100000, True)) == "Avoid checkmate"
 
 
 def test_prompt_assignment_logic_for_black_uses_white_oriented_eval() -> None:
     assert assign_prompt_type(_critical(503, 691, False, side_to_move="Black")) == "Defend accurately"
+
+
+def test_prompt_assignment_uses_theme_driven_categories() -> None:
+    mate = _critical_from_position(
+        "6k1/8/6K1/8/8/8/8/7Q w - - 0 1",
+        "h1a8",
+        "h1a1",
+        best_mover_eval=100000.0,
+        played_mover_eval=500.0,
+        eval_loss=100000.0,
+        best_mover_mate=1,
+    )
+    assert assign_prompt_type(mate) == "Deliver checkmate"
+
+    promotion = _critical_from_position(
+        "4k3/P7/8/8/8/8/8/4K3 w - - 0 1",
+        "a7a8q",
+        "e1e2",
+        best_mover_eval=900.0,
+        played_mover_eval=100.0,
+        eval_loss=800.0,
+    )
+    assert assign_prompt_type(promotion) == "Promote the pawn"
+
+    quiet = _critical_from_position(
+        "4k3/8/8/8/8/8/3R4/4K3 w - - 0 1",
+        "d2d4",
+        "d2d3",
+        best_mover_eval=180.0,
+        played_mover_eval=-120.0,
+        eval_loss=300.0,
+    )
+    assert assign_prompt_type(quiet) == "Find the quiet resource"
+
+
+def test_theme_assignment_covers_mate_promotion_quiet_and_fork() -> None:
+    mate = _critical_from_position(
+        "6k1/8/6K1/8/8/8/8/7Q w - - 0 1",
+        "h1a8",
+        "h1a1",
+        best_mover_eval=100000.0,
+        played_mover_eval=500.0,
+        eval_loss=100000.0,
+        best_mover_mate=1,
+    )
+    assert assign_puzzle_theme(mate) == "Mate in 1"
+    assert "Checkmate" in assign_puzzle_themes(mate)
+
+    promotion = _critical_from_position(
+        "4k3/P7/8/8/8/8/8/4K3 w - - 0 1",
+        "a7a8q",
+        "e1e2",
+        best_mover_eval=900.0,
+        played_mover_eval=100.0,
+        eval_loss=800.0,
+    )
+    assert assign_puzzle_theme(promotion) == "Promotion"
+    assert "Crushing" in assign_puzzle_themes(promotion)
+
+    quiet = _critical_from_position(
+        "4k3/8/8/8/8/8/3R4/4K3 w - - 0 1",
+        "d2d4",
+        "d2d3",
+        best_mover_eval=180.0,
+        played_mover_eval=-120.0,
+        eval_loss=300.0,
+    )
+    assert assign_puzzle_theme(quiet) == "Quiet move"
+
+    fork = _critical_from_position(
+        "4k3/7q/8/8/4N3/8/8/4K3 w - - 0 1",
+        "e4f6",
+        "e4g5",
+        best_mover_eval=600.0,
+        played_mover_eval=100.0,
+        eval_loss=500.0,
+    )
+    assert "Fork" in assign_puzzle_themes(fork)
+
+
+def test_theme_assignment_marks_defensive_and_goal_themes() -> None:
+    assert assign_puzzle_theme(_critical(-120, -150, False)) == "Defensive move"
+    assert "Crushing" in assign_puzzle_themes(_critical(700, 200, False))
+    assert "Advantage" in assign_puzzle_themes(_critical(250, 0, False))
 
 
 def test_extract_critical_positions_handles_missing_engine() -> None:
@@ -308,6 +482,8 @@ def test_write_puzzles_json_exports_frontend_friendly_payload(tmp_path: Path) ->
     assert payload[0]["fen"] == puzzles[0].fen
     assert payload[0]["best_move_uci"] == puzzles[0].best_move_uci
     assert payload[0]["prompt_hint"] == puzzles[0].prompt_hint
+    assert payload[0]["puzzle_theme"] == puzzles[0].puzzle_theme
+    assert payload[0]["tags"]
     assert "legal_move_options" in payload[0]
 
 
