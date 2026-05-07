@@ -437,6 +437,24 @@ def test_build_prompt_hint_mentions_material_loss_for_generic_blunder() -> None:
     assert hint == "Hint: Qh5 loses material or allows a decisive attack."
 
 
+def test_build_prompt_hint_does_not_inherit_best_move_material_win() -> None:
+    critical = _critical(300.0, 100.0, False, side_to_move="White")
+    critical.fen = "3qk3/8/8/8/8/8/4P3/3QK3 w - - 0 1"
+    critical.engine_best_move = "Qxd8+"
+    critical.engine_best_move_uci = "d1d8"
+    critical.played_move = "e4"
+    critical.played_move_san = "e4"
+    critical.played_move_uci = "e2e4"
+    critical.legal_move_options = [
+        LegalMoveOption("d1d8", "Qxd8+", "3Qk4/8/8/8/8/8/4P3/4K3 b - - 0 1", 300.0, "+3.00", None, "Qxd8+", 300.0, "+3.00", None, 0.0, "0 cp", "Excellent"),
+        LegalMoveOption("e2e4", "e4", "3qk3/8/8/8/4P3/8/8/3QK3 b - - 0 1", 100.0, "+1.00", None, "e4", 100.0, "+1.00", None, 200.0, "200 cp", "Mistake"),
+    ]
+
+    hint = _build_prompt_hint(critical, "Find the best move")
+
+    assert hint == "Hint: e4 gives away too much and worsens the position."
+
+
 def test_build_explanation_for_defence_mentions_pressure_and_worst_move() -> None:
     critical = _critical(220.0, 520.0, False, side_to_move="Black")
     critical.played_move = "Qh5??"

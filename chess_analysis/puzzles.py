@@ -208,6 +208,37 @@ def _capture_hanging_piece(board: chess.Board, move: chess.Move) -> bool:
     return len(defenders) == 0
 
 
+PIECE_VALUES = {
+    chess.PAWN: 1,
+    chess.KNIGHT: 3,
+    chess.BISHOP: 3,
+    chess.ROOK: 5,
+    chess.QUEEN: 9,
+}
+
+
+def _material_balance(board: chess.Board, color: bool) -> int:
+    own_score = 0
+    opp_score = 0
+    for piece_type, value in PIECE_VALUES.items():
+        own_score += len(board.pieces(piece_type, color)) * value
+        opp_score += len(board.pieces(piece_type, not color)) * value
+    return own_score - opp_score
+
+
+def _played_loses_material(critical: CriticalPosition, played_option: LegalMoveOption | None) -> bool:
+    if played_option is None:
+        return False
+    board_before = _safe_board(critical.fen)
+    board_after = _safe_board(played_option.resulting_fen)
+    if board_before is None or board_after is None:
+        return False
+    mover_color = board_before.turn
+    before_balance = _material_balance(board_before, mover_color)
+    after_balance = _material_balance(board_after, mover_color)
+    return after_balance <= before_balance - 1
+
+
 def _fork_tag(board_after: chess.Board, move: chess.Move, mover_color: bool) -> bool:
     moved_piece = board_after.piece_at(move.to_square)
     if moved_piece is None:
@@ -277,7 +308,8 @@ def _motif_tags(critical: CriticalPosition) -> list[str]:
     best_option = _find_best_option(critical)
     if best_option is not None and best_option.mate is not None and best_option.mate > 0 and "Checkmate" not in tags:
         tags.append("Checkmate")
-    if board_after.is_check() and board_after.attackers(mover_color, board_after.king(not mover_color) or move.to_square):
+    enemy_king_square = board_after.king(not mover_color)
+    if enemy_king_square is not None and board_after.is_check() and board_after.attackers(mover_color, enemy_king_square):
         if "Checkmate" not in tags:
             tags.append("Exposed king")
     if _fork_tag(board_after, move, mover_color):
@@ -407,7 +439,7 @@ def _build_prompt_hint(critical: CriticalPosition, prompt_type: str) -> str:
     if best_option is not None and best_option.mate is not None and best_option.mate > 0:
         return f"Hint: {played_move} misses a forced mate."
 
-    if "Hanging piece" in _motif_tags(critical):
+    if _played_loses_material(critical, played_option):
         return f"Hint: {played_move} loses material."
 
     if prompt_type == "Defend accurately":
