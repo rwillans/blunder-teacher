@@ -158,8 +158,7 @@ export function BoardShell({ puzzle, puzzleState, onMoveSelect }) {
         </div>
       </div>
       <p className="board-note">
-        The board uses the classic Cburnett SVG set locally, so the React viewer and exported trainer can share the same
-        piece style.
+        Select a piece, then select its destination square. The board flips automatically based on the side to move.
       </p>
     </section>
   );

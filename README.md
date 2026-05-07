@@ -1,6 +1,6 @@
-# blunder-teacher (v5 training viewer)
+# blunder-teacher (web-first training viewer)
 
-A minimal local chess analysis pipeline for PGN files, with critical-moment extraction, puzzle export, and a local single-position HTML training viewer.
+A local chess analysis pipeline for PGN files that extracts critical moments and exports a puzzle set for the React training app.
 
 ## Features in v5
 - Accepts one PGN file or a folder of PGN files.
@@ -14,23 +14,13 @@ A minimal local chess analysis pipeline for PGN files, with critical-moment extr
 - Runs a real Stockfish smoke test (`analyse()` from initial position).
 - Performs move-by-move engine analysis and flags critical moments using eval swing thresholding.
 - Exports puzzle-ready records from critical positions with simple rule-based prompt assignment.
-- Produces a standalone HTML training viewer with one puzzle at a time, sidebar filters, next/previous navigation, a local board, a local eval bar, and delayed answer reveal.
 - Configurable analysis settings:
   - `--engine-depth` (default: 14)
   - `--eval-threshold` in centipawns (default: 150)
-- Writes:
-  - `games_summary.csv`
-  - `critical_positions.csv`
-  - `puzzles.csv`
+- Default output:
   - `puzzles.json`
-  - `puzzles.html`
-  - `summary_report.md`
 
-`critical_positions.csv` includes a `mate_related` column so mate-transition moments can be separated from centipawn-only stats.
-
-`puzzles.csv` now carries richer training metadata, including Lichess links, best/played move details, precomputed eval data, explanation text, and serialized legal-move grading data for the local viewer.
-
-`puzzles.json` exposes the same puzzle payload in a frontend-friendly shape so a dedicated web client can render the trainer without being tied to the generated HTML file.
+`puzzles.json` carries the full frontend-friendly puzzle payload, including Lichess links, best and played move details, explanation text, tags, and precomputed legal-move grading data for the trainer.
 
 ## Requirements
 - Python 3.10+
@@ -63,20 +53,20 @@ python main.py --input /path/to/file_or_folder --output /path/to/output --player
 python main.py --input /path/to/file_or_folder --output /path/to/output --player "Rob Willans" --player-mistakes-only
 ```
 
-Open the generated local viewer:
+Generate app data:
 ```bash
 python main.py --input /path/to/file_or_folder --output /path/to/output
-# then open /path/to/output/puzzles.html in your browser
 ```
 
-Try the React viewer with the same run:
+Start the React trainer:
 ```bash
 python main.py --input /path/to/file_or_folder --output /path/to/output
-# this also syncs fresh puzzle data to web/public/puzzles.json
 cd web
 npm install
 npm run dev
 ```
+
+Then open [http://localhost:5173](http://localhost:5173).
 
 Tighter critical detection:
 ```bash
@@ -89,19 +79,15 @@ export STOCKFISH_PATH=/custom/path/to/stockfish
 python main.py --output /path/to/output
 ```
 
-## Web Foundation
+## React App
 
-The repo now includes a starter React/Vite frontend in [web/README.md](/D:/positron_projects/blunder-teacher/web/README.md) that loads puzzle data from `puzzles.json` and renders it through a dedicated chessboard component boundary. Each pipeline run now also syncs the latest puzzle payload into `web/public/puzzles.json`, so the React app can usually be started right after analysis without any manual file copy step.
-
-The generated HTML viewer now copies the classic Cburnett SVG piece assets into the output folder as `pieces/cburnett/`, so `puzzles.html` and the React viewer can share the same piece style.
+The repo includes a React/Vite frontend in [web/README.md](/D:/positron_projects/blunder-teacher/web/README.md). Each pipeline run writes `puzzles.json` to your chosen output folder and also syncs the latest puzzle data into `web/public/puzzles.json`, so the trainer usually refreshes straight from the latest analysis run.
 
 ## Notes
 - Directory scan is top-level `*.pgn` only (non-recursive).
 - Missing `ECO`/`Opening` tags are treated as blank values.
 - Invalid or malformed PGN sections are handled best-effort.
 - Critical positions capture the board state immediately before the played move.
-- Summary centipawn swing statistics are reported for non-mate critical moments, with mate-related moments counted separately.
 - Puzzle prompt types are intentionally simple in v5: `Find the best move`, `Spot the danger`, and `Defend accurately`.
 - `--player-mistakes-only` has effect only when `--player` is provided.
-- The HTML viewer grades moves locally from precomputed legal-move evals rather than calling a browser engine.
 - Precomputing every legal move for each critical position increases analysis cost roughly in proportion to the number of legal moves in those positions, but it keeps the viewer deterministic and offline-friendly.

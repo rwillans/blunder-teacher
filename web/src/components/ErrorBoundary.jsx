@@ -34,8 +34,7 @@ export class ErrorBoundary extends React.Component {
           <p>{error.message || "Unknown error"}</p>
           {stack ? <pre className="error-stack">{stack.trim()}</pre> : null}
           <p>
-            This usually means the browser received puzzle data in a shape the UI was not expecting. The page stays up so
-            we can see the actual error instead of a blank screen.
+            The page stays up so you can see the real error instead of landing on a blank screen.
           </p>
         </section>
       </main>

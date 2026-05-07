@@ -1,6 +1,5 @@
 from __future__ import annotations
 
-import csv
 import json
 import sys
 from pathlib import Path
@@ -16,6 +15,7 @@ from chess_analysis.critical_analysis import (
 from chess_analysis.engine_check import EngineCheckResult
 from chess_analysis.pipeline import _filter_player_mistakes_only, run_pipeline
 from chess_analysis.puzzles import assign_prompt_type, build_puzzles
+from chess_analysis.puzzles import _build_prompt_hint
 from chess_analysis.puzzles import _build_explanation
 from chess_analysis.reporting import (
     build_puzzle_payload,
@@ -128,33 +128,25 @@ def _critical(
     )
 
 
-def test_pipeline_writes_outputs_with_critical_positions_and_puzzles(tmp_path: Path) -> None:
+def test_pipeline_writes_web_first_puzzle_payload_by_default(tmp_path: Path) -> None:
     pgn_path = tmp_path / "sample.pgn"
     out_path = tmp_path / "out"
     pgn_path.write_text(BLUNDER_PGN, encoding="utf-8")
 
     run_pipeline(str(pgn_path), str(out_path), engine_depth=10, eval_threshold=120)
 
-    assert (out_path / "games_summary.csv").exists()
-    assert (out_path / "critical_positions.csv").exists()
-    assert (out_path / "summary_report.md").exists()
-    assert (out_path / "puzzles.csv").exists()
     assert (out_path / "puzzles.json").exists()
-    assert (out_path / "puzzles.html").exists()
-    assert (out_path / "pieces" / "cburnett" / "wK.svg").exists()
-    assert (out_path / "pieces" / "cburnett" / "license.txt").exists()
+    assert not (out_path / "games_summary.csv").exists()
+    assert not (out_path / "critical_positions.csv").exists()
+    assert not (out_path / "summary_report.md").exists()
+    assert not (out_path / "puzzles.csv").exists()
+    assert not (out_path / "puzzles.html").exists()
 
-    with (out_path / "critical_positions.csv").open("r", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        assert "mate_related" in (reader.fieldnames or [])
-
-    with (out_path / "puzzles.csv").open("r", encoding="utf-8") as handle:
-        reader = csv.DictReader(handle)
-        fieldnames = reader.fieldnames or []
-        assert "prompt_type" in fieldnames
-        assert "recommended_focus" in fieldnames
-        assert "legal_move_options_json" in fieldnames
-        assert "best_move_uci" in fieldnames
+    payload = json.loads((out_path / "puzzles.json").read_text(encoding="utf-8"))
+    assert isinstance(payload, list)
+    assert payload
+    assert payload[0]["best_move_uci"]
+    assert payload[0]["legal_move_options"]
 
 
 def test_default_inputs_directory_when_input_omitted(tmp_path: Path, monkeypatch) -> None:
@@ -168,7 +160,7 @@ def test_default_inputs_directory_when_input_omitted(tmp_path: Path, monkeypatch
 
     code = main()
     assert code == 0
-    assert (out_dir / "games_summary.csv").exists()
+    assert (out_dir / "puzzles.json").exists()
 
 
 def test_multiple_pgns_combined_and_player_filtering(tmp_path: Path) -> None:
@@ -232,14 +224,10 @@ def test_player_mistakes_filter_propagates_to_csv_and_puzzles(tmp_path: Path, mo
     assert len(result.critical_positions) == 1
     assert len(result.puzzles) == 1
 
-    with (out_path / "critical_positions.csv").open("r", encoding="utf-8") as handle:
-        rows = list(csv.DictReader(handle))
-    with (out_path / "puzzles.csv").open("r", encoding="utf-8") as handle:
-        puzzle_rows = list(csv.DictReader(handle))
+    payload = json.loads((out_path / "puzzles.json").read_text(encoding="utf-8"))
 
-    assert len(rows) == 1
-    assert len(puzzle_rows) == 1
-    assert rows[0]["side_to_move"] == "White"
+    assert len(payload) == 1
+    assert payload[0]["side_to_move"] == "White"
 
 
 def test_prompt_assignment_logic() -> None:
@@ -304,8 +292,7 @@ def test_pipeline_does_not_crash_when_engine_missing_for_critical(tmp_path: Path
     assert len(result.records) == 2
     assert result.critical_positions == []
     assert result.puzzles == []
-    assert (out_path / "critical_positions.csv").exists()
-    assert (out_path / "puzzles.csv").exists()
+    assert (out_path / "puzzles.json").exists()
 
 
 def test_summary_report_non_mate_stats_and_puzzle_counts(tmp_path: Path) -> None:
@@ -396,6 +383,7 @@ def test_write_puzzles_json_exports_frontend_friendly_payload(tmp_path: Path) ->
     assert payload[0]["id"] == puzzles[0].puzzle_id
     assert payload[0]["fen"] == puzzles[0].fen
     assert payload[0]["best_move_uci"] == puzzles[0].best_move_uci
+    assert payload[0]["prompt_hint"] == puzzles[0].prompt_hint
     assert "legal_move_options" in payload[0]
 
 
@@ -441,6 +429,14 @@ def test_build_explanation_for_find_best_move_mentions_status_rank_and_pv() -> N
     assert "A useful engine line is Nf3 Nc6 d4." in explanation
 
 
+def test_build_prompt_hint_mentions_material_loss_for_generic_blunder() -> None:
+    critical = _critical(180.0, -180.0, False, side_to_move="White")
+
+    hint = _build_prompt_hint(critical, "Find the best move")
+
+    assert hint == "Hint: Qh5 loses material or allows a decisive attack."
+
+
 def test_build_explanation_for_defence_mentions_pressure_and_worst_move() -> None:
     critical = _critical(220.0, 520.0, False, side_to_move="Black")
     critical.played_move = "Qh5??"
@@ -467,6 +463,26 @@ def test_build_explanation_for_defence_mentions_pressure_and_worst_move() -> Non
     assert "worst of the 3 legal moves" in explanation
 
 
+def test_build_prompt_hint_mentions_failed_defence() -> None:
+    critical = _critical(220.0, 520.0, False, side_to_move="Black")
+    critical.played_move = "Qh5??"
+    critical.played_move_san = "Qh5??"
+    critical.played_move_uci = "d1h5"
+    critical.engine_best_move = "Kg7"
+    critical.engine_best_move_uci = "g8g7"
+    critical.best_eval_display = "+2.20"
+    critical.played_eval_display = "+5.20"
+    critical.eval_loss_display = "300 cp"
+    critical.legal_move_options = [
+        LegalMoveOption("g8g7", "Kg7", "fen-1", 220.0, "+2.20", None, "Kg7 Qf3", -220.0, "-2.20", None, 0.0, "0 cp", "Excellent"),
+        LegalMoveOption("d1h5", "Qh5??", "fen-3", 520.0, "+5.20", None, "Qh5?? Qxh5", -520.0, "-5.20", None, 300.0, "300 cp", "Blunder"),
+    ]
+
+    hint = _build_prompt_hint(critical, "Defend accurately")
+
+    assert hint == "Hint: Qh5?? fails to hold the position and loses material or the attack."
+
+
 def test_build_explanation_for_mate_related_position_mentions_forced_mate() -> None:
     critical = _critical(100000.0, -100000.0, True, side_to_move="White")
     critical.engine_best_move = "Qg7#"
@@ -489,3 +505,20 @@ def test_build_explanation_for_mate_related_position_mentions_forced_mate() -> N
     assert "Qg7# was a forcing move" in explanation
     assert "Qh6?? allows a forced mate" in explanation
     assert "decisive error" in explanation
+
+
+def test_build_prompt_hint_mentions_forced_mate() -> None:
+    critical = _critical(100000.0, -100000.0, True, side_to_move="White")
+    critical.engine_best_move = "Qg7#"
+    critical.engine_best_move_uci = "g6g7"
+    critical.played_move = "Qh6??"
+    critical.played_move_san = "Qh6??"
+    critical.played_move_uci = "g6h6"
+    critical.legal_move_options = [
+        LegalMoveOption("g6g7", "Qg7#", "fen-best", 100000.0, "M1", 1, "Qg7#", 100000.0, "M1", 1, 0.0, "0 cp", "Excellent"),
+        LegalMoveOption("g6h6", "Qh6??", "fen-played", -100000.0, "-M2", -2, "Qh6?? Kf7", -100000.0, "-M2", -2, 100000.0, "Mate swing", "Blunder"),
+    ]
+
+    hint = _build_prompt_hint(critical, "Spot the danger")
+
+    assert hint == "Hint: Qh6?? allows a forced mate."

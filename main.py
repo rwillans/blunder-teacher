@@ -93,6 +93,9 @@ def main() -> int:
     logging.info("Processed %d games", len(result.records))
     logging.info("Detected %d critical moments", len(result.critical_positions))
     logging.info("Exported %d puzzles", len(result.puzzles))
+    logging.info("Primary app data written to: %s", result.puzzles_json_path)
+    if result.web_puzzles_json_path:
+        logging.info("React viewer data synced to: %s", result.web_puzzles_json_path)
     logging.info("Stockfish smoke test success: %s", result.engine_result.success)
 
     if not result.engine_result.success:

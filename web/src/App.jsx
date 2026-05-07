@@ -2,7 +2,7 @@ import React, { useEffect, useState } from "react";
 
 import { PuzzleWorkspace } from "./components/PuzzleWorkspace";
 
-const DEFAULT_PUZZLES_URL = import.meta.env.VITE_PUZZLES_URL || "/puzzles.json";
+const DEFAULT_PUZZLES_URL = import.meta.env.VITE_PUZZLES_URL || (import.meta.env.DEV ? "/api/puzzles" : "/puzzles.json");
 
 function buildPuzzleState(puzzle) {
   return {
@@ -44,11 +44,10 @@ export default function App() {
     async function loadPuzzles() {
       try {
         const response = await fetch(DEFAULT_PUZZLES_URL);
-        if (!response.ok) {
-          throw new Error(`Request failed with status ${response.status}`);
-        }
-
         const payload = await response.json();
+        if (!response.ok) {
+          throw new Error(payload?.error || `Request failed with status ${response.status}`);
+        }
         if (!Array.isArray(payload)) {
           throw new Error("Expected puzzles.json to contain a top-level array.");
         }
@@ -90,6 +89,9 @@ export default function App() {
   const safeCursor = filteredPuzzles.length === 0 ? 0 : Math.min(cursor, filteredPuzzles.length - 1);
   const currentPuzzle = filteredPuzzles[safeCursor] || null;
   const currentPuzzleState = currentPuzzle ? puzzleStates[currentPuzzle.id] : null;
+  const promptTypes = uniqueSorted(puzzles.map((puzzle) => puzzle.puzzle_prompt_type));
+  const openings = uniqueSorted(puzzles.map((puzzle) => puzzle.opening));
+  const activeFilterCount = Object.values(filters).filter(Boolean).length;
 
   function updateCurrentPuzzleState(mutator) {
     if (!currentPuzzle) {
@@ -110,6 +112,15 @@ export default function App() {
       ...currentFilters,
       [key]: value,
     }));
+    setCursor(0);
+  }
+
+  function clearFilters() {
+    setFilters({
+      promptType: "",
+      opening: "",
+      sideToMove: "",
+    });
     setCursor(0);
   }
 
@@ -151,21 +162,48 @@ export default function App() {
     <div className="page-shell">
       <aside className="sidebar">
         <div className="brand-block">
-          <span className="eyebrow">Web Foundation</span>
+          <span className="eyebrow">Training App</span>
           <h1>Blunder Teacher</h1>
           <p className="lede">
-            A longer-term React viewer that loads backend puzzle data from <code>puzzles.json</code> and gives the board
-            UI its own home.
+            Review critical positions from your PGNs, try your move on the board, and reveal the engine answer only when
+            you are ready.
           </p>
         </div>
 
         <section className="sidebar-card">
-          <h2>Filters</h2>
+          <div className="sidebar-section-header">
+            <h2>Session</h2>
+            <span className="counter-pill">{puzzles.length} loaded</span>
+          </div>
+          <div className="stat-grid">
+            <div className="stat-card">
+              <span className="stat-label">Visible now</span>
+              <strong>{filteredPuzzles.length}</strong>
+            </div>
+            <div className="stat-card">
+              <span className="stat-label">Openings</span>
+              <strong>{openings.length}</strong>
+            </div>
+            <div className="stat-card">
+              <span className="stat-label">Prompt types</span>
+              <strong>{promptTypes.length}</strong>
+            </div>
+          </div>
+        </section>
+
+        <section className="sidebar-card">
+          <div className="sidebar-section-header">
+            <h2>Filters</h2>
+            <button type="button" className="link-button muted-action" onClick={clearFilters} disabled={!activeFilterCount}>
+              Clear all
+            </button>
+          </div>
+          <p className="small-print">Narrow the training set by question type, opening, or side to move.</p>
           <label>
             <span>Prompt type</span>
             <select value={filters.promptType} onChange={(event) => handleFilterChange("promptType", event.target.value)}>
               <option value="">Any</option>
-              {uniqueSorted(puzzles.map((puzzle) => puzzle.puzzle_prompt_type)).map((promptType) => (
+              {promptTypes.map((promptType) => (
                 <option key={promptType} value={promptType}>
                   {promptType}
                 </option>
@@ -177,7 +215,7 @@ export default function App() {
             <span>Opening</span>
             <select value={filters.opening} onChange={(event) => handleFilterChange("opening", event.target.value)}>
               <option value="">Any</option>
-              {uniqueSorted(puzzles.map((puzzle) => puzzle.opening)).map((opening) => (
+              {openings.map((opening) => (
                 <option key={opening} value={opening}>
                   {opening}
                 </option>
@@ -196,12 +234,10 @@ export default function App() {
         </section>
 
         <section className="sidebar-card">
-          <h2>Source</h2>
+          <h2>How To Use It</h2>
           <p className="small-print">
-            Loading from <code>{DEFAULT_PUZZLES_URL}</code>
-          </p>
-          <p className="small-print">
-            This keeps the analysis pipeline and the board renderer decoupled, which is the important technical-debt win.
+            Pick a piece, then click a destination square. Use <strong>Check move</strong> to grade your choice, or
+            reveal the answer if you want the engine line and explanation.
           </p>
         </section>
       </aside>
@@ -209,8 +245,8 @@ export default function App() {
       <main className="main-panel">
         <header className="topbar">
           <div>
-            <span className="eyebrow">Puzzle Viewer</span>
-            <h2>Component-driven board workspace</h2>
+            <span className="eyebrow">Study Board</span>
+            <h2>{currentPuzzle ? currentPuzzle.prompt : "Ready to train"}</h2>
           </div>
 
           <div className="counter-pill">
@@ -221,7 +257,7 @@ export default function App() {
         {status === "loading" ? (
           <section className="empty-state">
             <h3>Loading puzzles…</h3>
-            <p>The frontend is waiting for the exported JSON payload.</p>
+            <p>The board will appear as soon as the latest puzzle set has loaded.</p>
           </section>
         ) : null}
 
@@ -229,14 +265,18 @@ export default function App() {
           <section className="empty-state">
             <h3>Could not load puzzle data</h3>
             <p>{errorMessage}</p>
-            <p>Make sure the Python pipeline has written a <code>puzzles.json</code> file and that the frontend can fetch it.</p>
+            <p>Run the Python pipeline again and make sure the app can still read <code>{DEFAULT_PUZZLES_URL}</code>.</p>
           </section>
         ) : null}
 
         {status === "ready" && !currentPuzzle ? (
           <section className="empty-state">
-            <h3>No puzzles match these filters</h3>
-            <p>Try widening the opening, prompt, or side-to-move filters.</p>
+            <h3>{puzzles.length === 0 ? "No puzzles loaded yet" : "No puzzles match the current filters"}</h3>
+            <p>
+              {puzzles.length === 0
+                ? "Run the Python pipeline to generate fresh puzzle data, then refresh this page."
+                : "Clear one or more filters to bring positions back into the training set."}
+            </p>
           </section>
         ) : null}
 

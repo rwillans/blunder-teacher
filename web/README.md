@@ -1,10 +1,10 @@
 # Blunder Teacher Web
 
-This is the longer-term frontend foundation for moving the trainer away from a giant generated HTML file and toward a real component-driven web app.
+This is the main trainer UI. It loads exported puzzle data from `puzzles.json` and presents it as a browser-based study board.
 
 ## What It Expects
 
-The Python pipeline now writes `puzzles.json` into the selected output directory and also syncs a copy to `web/public/puzzles.json`. This frontend loads that payload and renders it with React plus `react-chessboard`.
+The Python pipeline writes `puzzles.json` into the selected output directory and also syncs a copy to `web/public/puzzles.json`. This frontend loads that payload and renders it as the default viewer.
 
 By default the app fetches `/puzzles.json`.
 
@@ -27,12 +27,13 @@ npm run dev
 
 If you want to point the frontend at a different JSON file or backend route, set `VITE_PUZZLES_URL`.
 
-## Why This Exists
+## What The App Does
 
-- The board UI now has a dedicated component boundary.
-- Piece and board aesthetics can evolve independently from the analysis pipeline.
-- A future FastAPI or similar backend can serve `puzzles.json` without rewriting the viewer again.
+- lets you filter the current puzzle set
+- shows one position at a time
+- grades a selected move from precomputed engine analysis
+- reveals the engine line and explanation on demand
 
 ## Piece Set
 
-The frontend now uses the classic Cburnett SVG piece set from `web/public/pieces/cburnett/`, rendered through `react-chessboard`'s custom piece API. The exported HTML viewer also copies the same assets into its output folder so both viewers stay visually aligned.
+The app uses the classic Cburnett SVG piece set from `web/public/pieces/cburnett/`.
