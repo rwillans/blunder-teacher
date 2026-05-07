@@ -81,7 +81,7 @@ python main.py --output /path/to/output
 
 ## React App
 
-The repo includes a React/Vite frontend in [web/README.md](/D:/positron_projects/blunder-teacher/web/README.md). Each pipeline run writes `puzzles.json` to your chosen output folder and also syncs the latest puzzle data into `web/public/puzzles.json`, so the trainer usually refreshes straight from the latest analysis run.
+The repo includes a React/Vite frontend in [web/README.md](/D:/positron_projects/blunder-teacher/web/README.md). Each pipeline run writes `puzzles.json` to your chosen output folder and also syncs a copy into `web/public/puzzles.json` for static builds. During local Vite development, the app reads directly from `outputs/puzzles.json` through `/api/puzzles`, so you are not depending on a stale copied file.
 
 ## Notes
 - Directory scan is top-level `*.pgn` only (non-recursive).

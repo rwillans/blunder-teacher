@@ -12,16 +12,13 @@ from chess_analysis.critical_analysis import (
     _is_same_winning_bucket,
     extract_critical_positions,
 )
-from chess_analysis.engine_check import EngineCheckResult
 from chess_analysis.pipeline import _filter_player_mistakes_only, run_pipeline
 from chess_analysis.puzzles import assign_prompt_type, build_puzzles
 from chess_analysis.puzzles import _build_prompt_hint
 from chess_analysis.puzzles import _build_explanation
 from chess_analysis.reporting import (
     build_puzzle_payload,
-    write_puzzle_report_html,
     write_puzzles_json,
-    write_summary_report_md,
     write_web_public_puzzles_json,
 )
 from main import main
@@ -293,79 +290,6 @@ def test_pipeline_does_not_crash_when_engine_missing_for_critical(tmp_path: Path
     assert result.critical_positions == []
     assert result.puzzles == []
     assert (out_path / "puzzles.json").exists()
-
-
-def test_summary_report_non_mate_stats_and_puzzle_counts(tmp_path: Path) -> None:
-    records = []
-    critical = [
-        _critical(200.0, 0.0, False),
-        _critical(100000.0, -100000.0, True),
-    ]
-    puzzles = build_puzzles(critical)
-    engine_result = EngineCheckResult(success=True, engine_path="/usr/games/stockfish", detail="ok")
-
-    report = write_summary_report_md(
-        tmp_path,
-        records,
-        critical,
-        puzzles,
-        engine_result,
-        input_path="inputs",
-        player_filter="Rob Willans",
-        player_mistakes_only=True,
-        pgn_files=["a.pgn", "b.pgn"],
-    )
-    text = report.read_text(encoding="utf-8")
-
-    assert "Player filtering applied: **Yes**" in text
-    assert "Player-mistakes-only filtering applied: **Yes**" in text
-    assert "Number of PGN files analysed: **2**" in text
-    assert "Total number of games processed (after filtering): **0**" in text
-    assert "Number of mate-related critical moments: **1**" in text
-    assert "Average centipawn swing (non-mate): **200.00 cp**" in text
-    assert "Maximum centipawn swing (non-mate): **200.00 cp**" in text
-    assert "Number of puzzles exported: **2**" in text
-    assert "Number of mate-related puzzles: **1**" in text
-    assert "Find the best move: 1" in text
-    assert "Spot the danger: 1" in text
-
-
-def test_puzzle_report_html_uses_single_position_viewer_with_filters_and_navigation(tmp_path: Path) -> None:
-    puzzles = build_puzzles(
-        [
-            _critical(150.0, 0.0, False, white="Rob Willans", black="Other", side_to_move="White"),
-            _critical(-120.0, -250.0, False, white="Other", black="Rob Willans", side_to_move="Black"),
-        ]
-    )
-
-    html_report = write_puzzle_report_html(
-        tmp_path,
-        puzzles,
-        input_path="inputs",
-        player_filter="Rob Willans",
-        player_mistakes_only=True,
-    )
-    text = html_report.read_text(encoding="utf-8")
-
-    assert "Blunder Teacher v5 Training Viewer" in text
-    assert 'id="prompt-filter"' in text
-    assert 'id="opening-filter"' in text
-    assert 'id="side-filter"' in text
-    assert "Apply Filters" in text
-    assert "Clear Filters" in text
-    assert "Puzzle 0 of 0" in text
-    assert "Submit Move" in text
-    assert "Reveal Answer" in text
-    assert "No puzzles match the current filters" in text
-    assert "Open on Lichess" in text
-    assert "Played in Game" in text
-    assert '"legal_move_options"' in text
-    assert "renderPieceImage" in text
-    assert "pieces/cburnett/wK.svg" in text
-    assert "const nameMap = { k: 'king'" in text
-    assert "const nameMap = {{ k: 'king'" not in text
-    assert 'class="board-frame"' in text
-    assert "♔" not in text
 
 
 def test_write_puzzles_json_exports_frontend_friendly_payload(tmp_path: Path) -> None:

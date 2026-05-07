@@ -4,9 +4,11 @@ This is the main trainer UI. It loads exported puzzle data from `puzzles.json` a
 
 ## What It Expects
 
-The Python pipeline writes `puzzles.json` into the selected output directory and also syncs a copy to `web/public/puzzles.json`. This frontend loads that payload and renders it as the default viewer.
+The Python pipeline writes `puzzles.json` into the selected output directory and also syncs a copy to `web/public/puzzles.json`.
 
-By default the app fetches `/puzzles.json`.
+During local Vite development, the app fetches `/api/puzzles`, which reads directly from `../outputs/puzzles.json`.
+
+For static builds, the app falls back to `/puzzles.json`.
 
 You can also point it at another URL by setting `VITE_PUZZLES_URL`.
 
