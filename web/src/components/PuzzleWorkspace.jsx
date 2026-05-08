@@ -1,19 +1,17 @@
 import React from "react";
 
 import { BoardShell } from "./BoardShell";
+import {
+  buildLichessAnalysisUrl,
+  buildLichessOpeningTrainingUrl,
+  buildLichessOpeningUrl,
+  buildLichessPracticeUrl,
+  buildLichessThemeUrl,
+} from "../lichessLinks";
 
 function moveLookup(puzzle) {
   const options = Array.isArray(puzzle.legal_move_options) ? puzzle.legal_move_options : [];
   return Object.fromEntries(options.map((option) => [option.uci, option]));
-}
-
-function buildLichessAnalysisUrl(fen, orientation) {
-  if (!fen) {
-    return "";
-  }
-  const color = orientation === "Black" ? "black" : "white";
-  const encodedFen = encodeURIComponent(fen).replace(/%2F/g, "/");
-  return `https://lichess.org/analysis/${encodedFen}?color=${color}`;
 }
 
 export function PuzzleWorkspace({
@@ -36,6 +34,14 @@ export function PuzzleWorkspace({
   const playedMove = puzzle.played_move_san || puzzle.played_move_uci || "Unavailable";
   const bestMove = puzzle.best_move_san || puzzle.best_move_uci || "Unavailable";
   const currentBoardLichessUrl = submittedMove ? buildLichessAnalysisUrl(submittedMove.resulting_fen, puzzle.side_to_move) : "";
+  const lichessThemeLinks = tags
+    .map((tag) => ({ label: tag, url: buildLichessThemeUrl(tag) }))
+    .filter((link) => link.url);
+  const lichessPracticeLinks = tags
+    .map((tag) => ({ label: tag, url: buildLichessPracticeUrl(tag) }))
+    .filter((link) => link.url);
+  const lichessOpeningTrainingUrl = buildLichessOpeningTrainingUrl(puzzle.opening);
+  const lichessOpeningUrl = buildLichessOpeningUrl(puzzle.opening);
 
   return (
     <section className="workspace-grid">
@@ -124,8 +130,8 @@ export function PuzzleWorkspace({
             </button>
           </div>
           {selectedMove ? (
-            <button type="button" className="link-button" onClick={onClearSelection}>
-              Clear selection
+            <button type="button" className="link-button" onClick={submittedMove ? onReset : onClearSelection}>
+              {submittedMove ? "Reset" : "Clear selection"}
             </button>
           ) : null}
         </section>
@@ -153,14 +159,42 @@ export function PuzzleWorkspace({
               </div>
             </dl>
             {currentBoardLichessUrl ? (
-              <a
-                href={currentBoardLichessUrl}
-                target="_blank"
-                rel="noreferrer"
-                className="analysis-link"
-              >
-                Open position in Lichess
-              </a>
+              <div className="lichess-link-stack">
+                <div className="lichess-link-group">
+                  <a
+                    href={currentBoardLichessUrl}
+                    target="_blank"
+                    rel="noreferrer"
+                    className="analysis-link"
+                  >
+                    Open position in Lichess
+                  </a>
+                  {lichessOpeningUrl ? (
+                    <a href={lichessOpeningUrl} target="_blank" rel="noreferrer" className="analysis-link">
+                      Explore {puzzle.opening} on Lichess
+                    </a>
+                  ) : null}
+                </div>
+                {lichessOpeningTrainingUrl || lichessThemeLinks.length || lichessPracticeLinks.length ? (
+                  <div className="lichess-link-group thematic-link-group">
+                    {lichessOpeningTrainingUrl ? (
+                      <a href={lichessOpeningTrainingUrl} target="_blank" rel="noreferrer" className="analysis-link">
+                        Open {puzzle.opening} puzzles on Lichess
+                      </a>
+                    ) : null}
+                    {lichessThemeLinks.map((link) => (
+                      <a key={link.label} href={link.url} target="_blank" rel="noreferrer" className="analysis-link">
+                        Open {link.label.toLowerCase()} puzzles on Lichess
+                      </a>
+                    ))}
+                    {lichessPracticeLinks.map((link) => (
+                      <a key={`${link.label}-practice`} href={link.url} target="_blank" rel="noreferrer" className="analysis-link">
+                        Study {link.label.toLowerCase()} in Lichess Practice
+                      </a>
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             ) : null}
           </section>
         ) : null}

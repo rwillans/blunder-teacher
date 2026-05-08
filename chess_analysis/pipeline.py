@@ -12,7 +12,9 @@ from .pgn_parser import GameRecord, parse_pgn_files
 from .puzzles import PuzzleRecord, build_puzzles
 from .reporting import (
     write_puzzles_json,
+    write_weaknesses_json,
     write_web_public_puzzles_json,
+    write_web_public_weaknesses_json,
 )
 
 
@@ -47,7 +49,9 @@ class PipelineResult:
     pgn_files: list[str]
     pgn_file_count: int
     puzzles_json_path: str
+    weaknesses_json_path: str
     web_puzzles_json_path: str | None
+    web_weaknesses_json_path: str | None
 
 
 def run_pipeline(
@@ -82,12 +86,17 @@ def run_pipeline(
     puzzles = build_puzzles(critical_positions)
 
     puzzles_json_path = str(write_puzzles_json(output_dir, puzzles))
+    weaknesses_json_path = str(write_weaknesses_json(output_dir, puzzles))
     project_root = Path(__file__).resolve().parent.parent
     web_puzzles_json = write_web_public_puzzles_json(project_root, puzzles)
+    web_weaknesses_json = write_web_public_weaknesses_json(project_root, puzzles)
 
     logging.info("Wrote puzzles JSON: %s", puzzles_json_path)
+    logging.info("Wrote weaknesses JSON: %s", weaknesses_json_path)
     if web_puzzles_json is not None:
         logging.info("Synced puzzles JSON for web viewer: %s", web_puzzles_json)
+    if web_weaknesses_json is not None:
+        logging.info("Synced weaknesses JSON for web viewer: %s", web_weaknesses_json)
 
     return PipelineResult(
         records=records,
@@ -100,5 +109,7 @@ def run_pipeline(
         pgn_files=[str(p) for p in pgn_files],
         pgn_file_count=len(pgn_files),
         puzzles_json_path=puzzles_json_path,
+        weaknesses_json_path=weaknesses_json_path,
         web_puzzles_json_path=str(web_puzzles_json) if web_puzzles_json is not None else None,
+        web_weaknesses_json_path=str(web_weaknesses_json) if web_weaknesses_json is not None else None,
     )

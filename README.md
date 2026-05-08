@@ -19,8 +19,9 @@ A local chess analysis pipeline for PGN files that extracts critical moments and
   - `--eval-threshold` in centipawns (default: 150)
 - Default output:
   - `puzzles.json`
+  - `weaknesses.json`
 
-`puzzles.json` carries the full frontend-friendly puzzle payload, including Lichess links, best and played move details, explanation text, a primary theme, theme tags, and precomputed legal-move grading data for the trainer.
+`puzzles.json` carries the full frontend-friendly puzzle payload, including Lichess links, best and played move details, explanation text, a primary theme, theme tags, and precomputed legal-move grading data for the trainer. `weaknesses.json` summarizes recurring themes, openings, phases, sides, and severity buckets so the frontend can surface personal drill priorities.
 
 ## Requirements
 - Python 3.10+
@@ -89,5 +90,6 @@ The repo includes a React/Vite frontend in [web/README.md](/D:/positron_projects
 - Invalid or malformed PGN sections are handled best-effort.
 - Critical positions capture the board state immediately before the played move.
 - Puzzle prompt types are instructional labels, while `tags` are the Lichess-style study themes used by the trainer filter.
+- The React trainer also reads `weaknesses.json` when present and tracks local solve/fail/reveal history in browser storage.
 - `--player-mistakes-only` has effect only when `--player` is provided.
 - Precomputing every legal move for each critical position increases analysis cost roughly in proportion to the number of legal moves in those positions, but it keeps the viewer deterministic and offline-friendly.

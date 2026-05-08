@@ -6,6 +6,7 @@ from pathlib import Path
 from typing import Iterable
 
 from .puzzles import PuzzleRecord
+from .weaknesses import build_weakness_payload
 
 
 def build_puzzle_payload(puzzles: list[PuzzleRecord]) -> list[dict[str, object]]:
@@ -58,8 +59,18 @@ def _write_puzzle_payload_file(output_file: Path, puzzles: Iterable[PuzzleRecord
     return output_file
 
 
+def _write_weakness_payload_file(output_file: Path, puzzles: Iterable[PuzzleRecord]) -> Path:
+    payload = build_weakness_payload(list(puzzles))
+    output_file.write_text(json.dumps(payload, ensure_ascii=True, indent=2) + "\n", encoding="utf-8")
+    return output_file
+
+
 def write_puzzles_json(output_dir: Path, puzzles: Iterable[PuzzleRecord]) -> Path:
     return _write_puzzle_payload_file(output_dir / "puzzles.json", puzzles)
+
+
+def write_weaknesses_json(output_dir: Path, puzzles: Iterable[PuzzleRecord]) -> Path:
+    return _write_weakness_payload_file(output_dir / "weaknesses.json", puzzles)
 
 
 def write_web_public_puzzles_json(project_root: Path, puzzles: Iterable[PuzzleRecord]) -> Path | None:
@@ -70,3 +81,13 @@ def write_web_public_puzzles_json(project_root: Path, puzzles: Iterable[PuzzleRe
     public_dir = web_dir / "public"
     public_dir.mkdir(parents=True, exist_ok=True)
     return _write_puzzle_payload_file(public_dir / "puzzles.json", puzzles)
+
+
+def write_web_public_weaknesses_json(project_root: Path, puzzles: Iterable[PuzzleRecord]) -> Path | None:
+    web_dir = project_root / "web"
+    if not web_dir.exists():
+        return None
+
+    public_dir = web_dir / "public"
+    public_dir.mkdir(parents=True, exist_ok=True)
+    return _write_weakness_payload_file(public_dir / "weaknesses.json", puzzles)
