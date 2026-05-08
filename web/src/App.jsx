@@ -1,8 +1,16 @@
 import React, { useEffect, useState } from "react";
 
 import { PuzzleWorkspace } from "./components/PuzzleWorkspace";
+import {
+  buildLichessOpeningTrainingUrl,
+  buildLichessOpeningUrl,
+  buildLichessPracticeUrl,
+  buildLichessThemeUrl,
+} from "./lichessLinks";
 
 const DEFAULT_PUZZLES_URL = import.meta.env.VITE_PUZZLES_URL || (import.meta.env.DEV ? "/api/puzzles" : "/puzzles.json");
+const DEFAULT_WEAKNESSES_URL = import.meta.env.VITE_WEAKNESSES_URL || (import.meta.env.DEV ? "/api/weaknesses" : "/weaknesses.json");
+const TRAINER_STATS_KEY = "blunder-teacher:trainer-stats:v1";
 
 function buildPuzzleState(puzzle) {
   return {
@@ -26,14 +34,146 @@ function uniqueSorted(values) {
   return [...new Set(values.filter(Boolean))].sort((left, right) => left.localeCompare(right));
 }
 
+function countThemes(puzzles) {
+  const counts = {};
+  for (const puzzle of puzzles) {
+    const tags = Array.isArray(puzzle.tags) ? uniqueSorted(puzzle.tags) : [];
+    for (const tag of tags) {
+      counts[tag] = (counts[tag] || 0) + 1;
+    }
+  }
+  return counts;
+}
+
+function countValues(values) {
+  const counts = {};
+  for (const value of values) {
+    if (value) {
+      counts[value] = (counts[value] || 0) + 1;
+    }
+  }
+  return counts;
+}
+
+function loadTrainerStats() {
+  if (typeof window === "undefined") {
+    return {};
+  }
+  try {
+    const rawStats = window.localStorage.getItem(TRAINER_STATS_KEY);
+    return rawStats ? JSON.parse(rawStats) : {};
+  } catch {
+    return {};
+  }
+}
+
+function moveLookup(puzzle) {
+  const options = Array.isArray(puzzle.legal_move_options) ? puzzle.legal_move_options : [];
+  return Object.fromEntries(options.map((option) => [option.uci, option]));
+}
+
+function isSolvedMove(move) {
+  if (!move) {
+    return false;
+  }
+  return ["Excellent", "Good"].includes(move.grade) || Number(move.eval_loss_cp || 0) <= 50;
+}
+
+function practiceGapForWeakness(weakness, trainerStats) {
+  const puzzleIds = Array.isArray(weakness.puzzle_ids)
+    ? weakness.puzzle_ids
+    : (Array.isArray(weakness.examples) ? weakness.examples.map((example) => example.id) : []);
+  return puzzleIds.reduce((score, puzzleId) => {
+    const stats = trainerStats[puzzleId] || {};
+    return score + Number(stats.failed || 0) + Number(stats.revealed || 0) - Number(stats.solved || 0);
+  }, 0);
+}
+
+function weaknessDrillLinks(weakness) {
+  const links = [];
+  const label = weakness.label || "";
+  if (weakness.group_type === "opening") {
+    const trainingUrl = buildLichessOpeningTrainingUrl(label);
+    const openingUrl = buildLichessOpeningUrl(label);
+    if (trainingUrl) {
+      links.push({ label: "Puzzles", url: trainingUrl });
+    }
+    if (openingUrl) {
+      links.push({ label: "Explore", url: openingUrl });
+    }
+  }
+  if (["theme", "primary_theme", "phase"].includes(weakness.group_type)) {
+    const themeUrl = buildLichessThemeUrl(label);
+    const practiceUrl = buildLichessPracticeUrl(label);
+    if (themeUrl) {
+      links.push({ label: "Puzzles", url: themeUrl });
+    }
+    if (practiceUrl) {
+      links.push({ label: "Practice", url: practiceUrl });
+    }
+  }
+  return links;
+}
+
+function WeaknessPanel({ weaknesses, trainerStats }) {
+  const topWeaknesses = [...weaknesses]
+    .sort((left, right) => {
+      const leftGap = practiceGapForWeakness(left, trainerStats);
+      const rightGap = practiceGapForWeakness(right, trainerStats);
+      return rightGap - leftGap || Number(right.weakness_score || 0) - Number(left.weakness_score || 0);
+    })
+    .slice(0, 5);
+
+  if (!topWeaknesses.length) {
+    return null;
+  }
+
+  return (
+    <section className="sidebar-card weakness-card">
+      <div className="sidebar-section-header">
+        <h2>Weaknesses</h2>
+        <span className="counter-pill">{weaknesses.length} groups</span>
+      </div>
+      <div className="weakness-list">
+        {topWeaknesses.map((weakness) => {
+          const drillLinks = weaknessDrillLinks(weakness);
+          const practiceGapScore = practiceGapForWeakness(weakness, trainerStats);
+          return (
+            <article key={`${weakness.group_type}:${weakness.label}`} className="weakness-item">
+              <div>
+                <span className="eyebrow">{String(weakness.group_type).replaceAll("_", " ")}</span>
+                <h3>{weakness.label}</h3>
+              </div>
+              <p className="small-print">
+                {weakness.count} positions · avg {weakness.average_eval_loss_display} · gap {practiceGapScore}
+              </p>
+              {drillLinks.length ? (
+                <div className="weakness-links">
+                  {drillLinks.map((link) => (
+                    <a key={link.label} href={link.url} target="_blank" rel="noreferrer" className="analysis-link">
+                      {link.label}
+                    </a>
+                  ))}
+                </div>
+              ) : null}
+            </article>
+          );
+        })}
+      </div>
+    </section>
+  );
+}
+
 export default function App() {
   const [status, setStatus] = useState("loading");
   const [errorMessage, setErrorMessage] = useState("");
   const [puzzles, setPuzzles] = useState([]);
+  const [weaknesses, setWeaknesses] = useState([]);
   const [puzzleStates, setPuzzleStates] = useState({});
+  const [trainerStats, setTrainerStats] = useState(loadTrainerStats);
   const [cursor, setCursor] = useState(0);
   const [filters, setFilters] = useState({
-    promptType: "",
+    theme: "",
     opening: "",
     sideToMove: "",
   });
@@ -73,8 +213,43 @@ export default function App() {
     };
   }, []);
 
+  useEffect(() => {
+    let active = true;
+
+    async function loadWeaknesses() {
+      try {
+        const response = await fetch(DEFAULT_WEAKNESSES_URL);
+        if (response.status === 404) {
+          return;
+        }
+        const payload = await response.json();
+        if (!active) {
+          return;
+        }
+        setWeaknesses(Array.isArray(payload) ? payload : []);
+      } catch {
+        if (active) {
+          setWeaknesses([]);
+        }
+      }
+    }
+
+    loadWeaknesses();
+    return () => {
+      active = false;
+    };
+  }, []);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(TRAINER_STATS_KEY, JSON.stringify(trainerStats));
+  }, [trainerStats]);
+
   const filteredPuzzles = puzzles.filter((puzzle) => {
-    if (filters.promptType && puzzle.puzzle_prompt_type !== filters.promptType) {
+    const tags = Array.isArray(puzzle.tags) ? puzzle.tags : [];
+    if (filters.theme && !tags.includes(filters.theme)) {
       return false;
     }
     if (filters.opening && puzzle.opening !== filters.opening) {
@@ -89,8 +264,11 @@ export default function App() {
   const safeCursor = filteredPuzzles.length === 0 ? 0 : Math.min(cursor, filteredPuzzles.length - 1);
   const currentPuzzle = filteredPuzzles[safeCursor] || null;
   const currentPuzzleState = currentPuzzle ? puzzleStates[currentPuzzle.id] : null;
-  const promptTypes = uniqueSorted(puzzles.map((puzzle) => puzzle.puzzle_prompt_type));
+  const themes = uniqueSorted(puzzles.flatMap((puzzle) => (Array.isArray(puzzle.tags) ? puzzle.tags : [])));
+  const themeCounts = countThemes(puzzles);
   const openings = uniqueSorted(puzzles.map((puzzle) => puzzle.opening));
+  const openingCounts = countValues(puzzles.map((puzzle) => puzzle.opening));
+  const sideToMoveCounts = countValues(puzzles.map((puzzle) => puzzle.side_to_move));
   const activeFilterCount = Object.values(filters).filter(Boolean).length;
 
   function updateCurrentPuzzleState(mutator) {
@@ -117,11 +295,31 @@ export default function App() {
 
   function clearFilters() {
     setFilters({
-      promptType: "",
+      theme: "",
       opening: "",
       sideToMove: "",
     });
     setCursor(0);
+  }
+
+  function recordTrainerResult(puzzleId, mutator) {
+    if (!puzzleId) {
+      return;
+    }
+    setTrainerStats((currentStats) => {
+      const existing = currentStats[puzzleId] || {
+        attempted: 0,
+        solved: 0,
+        failed: 0,
+        revealed: 0,
+        firstSelectedMove: "",
+        lastPracticed: "",
+      };
+      return {
+        ...currentStats,
+        [puzzleId]: mutator(existing),
+      };
+    });
   }
 
   function handleMoveSelect(selection) {
@@ -141,6 +339,18 @@ export default function App() {
   }
 
   function handleSubmitMove() {
+    const selectedMove = currentPuzzle && currentPuzzleState ? moveLookup(currentPuzzle)[currentPuzzleState.selectedMoveUci] : null;
+    if (currentPuzzle && selectedMove && !currentPuzzleState.submittedMoveUci) {
+      const solved = isSolvedMove(selectedMove);
+      recordTrainerResult(currentPuzzle.id, (existing) => ({
+        ...existing,
+        attempted: Number(existing.attempted || 0) + 1,
+        solved: Number(existing.solved || 0) + (solved ? 1 : 0),
+        failed: Number(existing.failed || 0) + (solved ? 0 : 1),
+        firstSelectedMove: existing.firstSelectedMove || selectedMove.uci,
+        lastPracticed: new Date().toISOString(),
+      }));
+    }
     updateCurrentPuzzleState((existing) => ({
       ...existing,
       submittedMoveUci: existing.selectedMoveUci,
@@ -148,6 +358,13 @@ export default function App() {
   }
 
   function handleReveal() {
+    if (currentPuzzle && currentPuzzleState && !currentPuzzleState.revealed) {
+      recordTrainerResult(currentPuzzle.id, (existing) => ({
+        ...existing,
+        revealed: Number(existing.revealed || 0) + 1,
+        lastPracticed: new Date().toISOString(),
+      }));
+    }
     updateCurrentPuzzleState((existing) => ({
       ...existing,
       revealed: true,
@@ -185,8 +402,8 @@ export default function App() {
               <strong>{openings.length}</strong>
             </div>
             <div className="stat-card">
-              <span className="stat-label">Prompt types</span>
-              <strong>{promptTypes.length}</strong>
+              <span className="stat-label">Themes</span>
+              <strong>{themes.length}</strong>
             </div>
           </div>
         </section>
@@ -198,14 +415,14 @@ export default function App() {
               Clear all
             </button>
           </div>
-          <p className="small-print">Narrow the training set by question type, opening, or side to move.</p>
+          <p className="small-print">Narrow the training set by theme, opening, or side to move.</p>
           <label>
-            <span>Prompt type</span>
-            <select value={filters.promptType} onChange={(event) => handleFilterChange("promptType", event.target.value)}>
+            <span>Theme</span>
+            <select value={filters.theme} onChange={(event) => handleFilterChange("theme", event.target.value)}>
               <option value="">Any</option>
-              {promptTypes.map((promptType) => (
-                <option key={promptType} value={promptType}>
-                  {promptType}
+              {themes.map((theme) => (
+                <option key={theme} value={theme}>
+                  {theme} [{themeCounts[theme] || 0}]
                 </option>
               ))}
             </select>
@@ -217,7 +434,7 @@ export default function App() {
               <option value="">Any</option>
               {openings.map((opening) => (
                 <option key={opening} value={opening}>
-                  {opening}
+                  {opening} [{openingCounts[opening] || 0}]
                 </option>
               ))}
             </select>
@@ -227,8 +444,8 @@ export default function App() {
             <span>Side to move</span>
             <select value={filters.sideToMove} onChange={(event) => handleFilterChange("sideToMove", event.target.value)}>
               <option value="">Any</option>
-              <option value="White">White</option>
-              <option value="Black">Black</option>
+              <option value="White">White [{sideToMoveCounts.White || 0}]</option>
+              <option value="Black">Black [{sideToMoveCounts.Black || 0}]</option>
             </select>
           </label>
         </section>
@@ -240,6 +457,8 @@ export default function App() {
             reveal the answer if you want the engine line and explanation.
           </p>
         </section>
+
+        <WeaknessPanel weaknesses={weaknesses} trainerStats={trainerStats} />
       </aside>
 
       <main className="main-panel">

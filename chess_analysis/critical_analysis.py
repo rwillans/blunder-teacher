@@ -27,6 +27,7 @@ class LegalMoveOption:
     eval_loss_cp: float
     eval_loss_display: str
     grade: str
+    pv_uci: list[str] = field(default_factory=list)
 
 
 @dataclass
@@ -234,6 +235,12 @@ def _pv_to_san(board: chess.Board, pv: list[chess.Move] | None, max_plies: int =
     return " ".join(san_moves)
 
 
+def _pv_to_uci(pv: list[chess.Move] | None, max_plies: int = 5) -> list[str]:
+    if not pv:
+        return []
+    return [move.uci() for move in pv[:max_plies]]
+
+
 def _analyse_legal_moves(
     engine: chess.engine.SimpleEngine,
     board: chess.Board,
@@ -257,7 +264,8 @@ def _analyse_legal_moves(
 
         candidate_summary = _invert_summary(_score_to_summary(candidate_score, candidate_board.turn))
         candidate_white_summary = _score_to_summary(candidate_score, chess.WHITE)
-        candidate_pv_san = _pv_to_san(candidate_board, candidate_info.get("pv"), max_plies=5)
+        candidate_pv = candidate_info.get("pv")
+        candidate_pv_san = _pv_to_san(candidate_board, candidate_pv, max_plies=5)
         legal_move_options.append(
             LegalMoveOption(
                 uci=legal_move.uci(),
@@ -273,6 +281,7 @@ def _analyse_legal_moves(
                 eval_loss_cp=0.0,
                 eval_loss_display=_format_eval_loss_display(0.0),
                 grade=_grade_eval_loss(0.0),
+                pv_uci=[legal_move.uci(), *_pv_to_uci(candidate_pv, max_plies=5)],
             )
         )
 
