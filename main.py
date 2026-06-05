@@ -5,6 +5,7 @@ import logging
 import sys
 
 from chess_analysis import run_pipeline
+from chess_analysis.critical_analysis import DEFAULT_THEME_PV_PLIES, MAX_THEME_PV_PLIES
 from chess_analysis.io_utils import InputPathError
 
 DEFAULT_INPUT_DIR = "inputs"
@@ -42,6 +43,15 @@ def build_parser() -> argparse.ArgumentParser:
         default=150,
         help="Critical moment threshold in centipawns (default: 150)",
     )
+    parser.add_argument(
+        "--theme-pv-plies",
+        type=int,
+        default=DEFAULT_THEME_PV_PLIES,
+        help=(
+            "Total plies to keep from the best and played engine lines for theme detection "
+            f"(default: {DEFAULT_THEME_PV_PLIES}, max: {MAX_THEME_PV_PLIES})"
+        ),
+    )
     return parser
 
 
@@ -55,6 +65,9 @@ def main() -> int:
     if args.eval_threshold < 1:
         logging.error("--eval-threshold must be >= 1")
         return 2
+    if args.theme_pv_plies < 1 or args.theme_pv_plies > MAX_THEME_PV_PLIES:
+        logging.error("--theme-pv-plies must be between 1 and %d", MAX_THEME_PV_PLIES)
+        return 2
 
     input_path = args.input or DEFAULT_INPUT_DIR
 
@@ -64,7 +77,12 @@ def main() -> int:
         logging.info("Applying player filter: %s", args.player)
     if args.player_mistakes_only and not args.player:
         logging.warning("--player-mistakes-only ignored because --player was not provided")
-    logging.info("Engine depth: %d | Eval threshold: %d cp", args.engine_depth, args.eval_threshold)
+    logging.info(
+        "Engine depth: %d | Eval threshold: %d cp | Theme PV plies: %d",
+        args.engine_depth,
+        args.eval_threshold,
+        args.theme_pv_plies,
+    )
 
     try:
         result = run_pipeline(
@@ -74,6 +92,7 @@ def main() -> int:
             player_mistakes_only=args.player_mistakes_only,
             engine_depth=args.engine_depth,
             eval_threshold=args.eval_threshold,
+            theme_pv_plies=args.theme_pv_plies,
         )
     except InputPathError as exc:
         if args.input is None:

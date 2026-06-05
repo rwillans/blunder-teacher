@@ -3,12 +3,15 @@ from __future__ import annotations
 import json
 import sys
 from pathlib import Path
+from types import SimpleNamespace
 
 import chess
+import chess.engine
 
 from chess_analysis.critical_analysis import (
     CriticalPosition,
     LegalMoveOption,
+    _analyse_legal_moves,
     _is_acceptable_alternative,
     _is_same_losing_bucket,
     _is_same_winning_bucket,
@@ -178,9 +181,18 @@ def _critical_from_position(
     best_mover_mate: int | None = None,
     played_mover_mate: int | None = None,
     mate_related: bool = False,
+    best_pv_uci: list[str] | None = None,
+    played_pv_uci: list[str] | None = None,
 ) -> CriticalPosition:
     board = chess.Board(fen)
-    best_option = _option_from_board(board, best_uci, best_mover_eval, 0.0, mover_mate=best_mover_mate)
+    best_option = _option_from_board(
+        board,
+        best_uci,
+        best_mover_eval,
+        0.0,
+        mover_mate=best_mover_mate,
+        pv_uci=best_pv_uci,
+    )
     played_option = _option_from_board(
         board,
         played_uci,
@@ -188,6 +200,7 @@ def _critical_from_position(
         eval_loss,
         grade="Blunder" if eval_loss > 250 else "Mistake",
         mover_mate=played_mover_mate,
+        pv_uci=played_pv_uci,
     )
     return CriticalPosition(
         source_file="a.pgn",
@@ -256,6 +269,36 @@ def test_default_inputs_directory_when_input_omitted(tmp_path: Path, monkeypatch
     code = main()
     assert code == 0
     assert (out_dir / "puzzles.json").exists()
+
+
+def test_main_forwards_theme_pv_plies(tmp_path: Path, monkeypatch) -> None:
+    captured_kwargs: dict[str, object] = {}
+
+    def fake_run_pipeline(*args, **kwargs):
+        captured_kwargs.update(kwargs)
+        return SimpleNamespace(
+            pgn_file_count=0,
+            records=[],
+            critical_positions=[],
+            puzzles=[],
+            puzzles_json_path=str(tmp_path / "puzzles.json"),
+            weaknesses_json_path=str(tmp_path / "weaknesses.json"),
+            web_puzzles_json_path=None,
+            web_weaknesses_json_path=None,
+            engine_result=SimpleNamespace(success=True, detail="ok"),
+        )
+
+    monkeypatch.setattr("main.run_pipeline", fake_run_pipeline)
+    monkeypatch.setattr(sys, "argv", ["main.py", "--output", str(tmp_path), "--theme-pv-plies", "12"])
+
+    assert main() == 0
+    assert captured_kwargs["theme_pv_plies"] == 12
+
+
+def test_main_rejects_invalid_theme_pv_plies(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.setattr(sys, "argv", ["main.py", "--output", str(tmp_path), "--theme-pv-plies", "21"])
+
+    assert main() == 2
 
 
 def test_multiple_pgns_combined_and_player_filtering(tmp_path: Path) -> None:
@@ -418,6 +461,85 @@ def test_theme_assignment_marks_defensive_and_goal_themes() -> None:
     assert assign_puzzle_theme(_critical(-120, -150, False)) == "Defensive move"
     assert "Crushing" in assign_puzzle_themes(_critical(700, 200, False))
     assert "Advantage" in assign_puzzle_themes(_critical(250, 0, False))
+
+
+def test_theme_assignment_scans_later_best_line_moves() -> None:
+    critical = _critical_from_position(
+        "4k3/P7/8/8/8/8/8/4K3 w - - 0 1",
+        "e1e2",
+        "e1d1",
+        best_mover_eval=900.0,
+        played_mover_eval=100.0,
+        eval_loss=800.0,
+        best_pv_uci=["e1e2", "e8d8", "a7a8q"],
+    )
+
+    assert "Promotion" in assign_puzzle_themes(critical)
+
+
+def test_theme_assignment_marks_back_rank_mate_from_replayed_line() -> None:
+    critical = _critical_from_position(
+        "6k1/5ppp/8/8/8/8/8/4R1K1 w - - 0 1",
+        "e1e8",
+        "e1e7",
+        best_mover_eval=100000.0,
+        played_mover_eval=500.0,
+        eval_loss=100000.0,
+        best_mover_mate=1,
+        best_pv_uci=["e1e8"],
+    )
+
+    themes = assign_puzzle_themes(critical)
+
+    assert "Checkmate" in themes
+    assert "Back rank mate" in themes
+
+
+def test_theme_assignment_marks_capture_the_defender_from_replayed_line() -> None:
+    critical = _critical_from_position(
+        "4k3/8/2n3p1/4q2Q/8/8/6B1/6K1 w - - 0 1",
+        "g2c6",
+        "g1h1",
+        best_mover_eval=900.0,
+        played_mover_eval=100.0,
+        eval_loss=800.0,
+        best_pv_uci=["g2c6", "e8f8", "h5e5"],
+    )
+
+    assert "Capture the defender" in assign_puzzle_themes(critical)
+
+
+def test_legal_move_analysis_expands_only_best_and_played_pvs() -> None:
+    class FakeEngine:
+        def analyse(self, board, limit):
+            move_uci = board.peek().uci()
+            mover_eval = 500 if move_uci == "d2d4" else 120
+            pv = [
+                chess.Move.from_uci("a2a3"),
+                chess.Move.from_uci("a7a6"),
+                chess.Move.from_uci("a3a4"),
+                chess.Move.from_uci("a6a5"),
+                chess.Move.from_uci("a4a5"),
+                chess.Move.from_uci("h7h6"),
+                chess.Move.from_uci("h2h3"),
+            ]
+            return {"score": chess.engine.PovScore(chess.engine.Cp(-mover_eval), board.turn), "pv": pv}
+
+    board = chess.Board("4k3/8/8/8/8/8/3R4/4K3 w - - 0 1")
+
+    options = _analyse_legal_moves(
+        FakeEngine(),
+        board,
+        chess.engine.Limit(depth=1),
+        played_move_uci="d2d3",
+        theme_pv_plies=8,
+    )
+    options_by_uci = {option.uci: option for option in options}
+    untouched_option = next(option for option in options if option.uci not in {"d2d4", "d2d3"})
+
+    assert len(options_by_uci["d2d4"].pv_uci) == 8
+    assert len(options_by_uci["d2d3"].pv_uci) == 8
+    assert len(untouched_option.pv_uci) == 6
 
 
 def test_extract_critical_positions_handles_missing_engine() -> None:

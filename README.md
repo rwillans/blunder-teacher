@@ -17,6 +17,7 @@ A local chess analysis pipeline for PGN files that extracts critical moments and
 - Configurable analysis settings:
   - `--engine-depth` (default: 14)
   - `--eval-threshold` in centipawns (default: 150)
+  - `--theme-pv-plies` total plies to keep from the best and played lines for theme detection (default: 10, max: 20)
 - Default output:
   - `puzzles.json`
   - `weaknesses.json`
@@ -74,6 +75,11 @@ Tighter critical detection:
 python main.py --input /path/to/file_or_folder --output /path/to/output --engine-depth 16 --eval-threshold 200
 ```
 
+Longer theme-detection lines:
+```bash
+python main.py --input /path/to/file_or_folder --output /path/to/output --theme-pv-plies 12
+```
+
 Optional engine path override:
 ```bash
 export STOCKFISH_PATH=/custom/path/to/stockfish
@@ -90,6 +96,7 @@ The repo includes a React/Vite frontend in [web/README.md](/D:/positron_projects
 - Invalid or malformed PGN sections are handled best-effort.
 - Critical positions capture the board state immediately before the played move.
 - Puzzle prompt types are instructional labels, while `tags` are the Lichess-style study themes used by the trainer filter.
+- `--theme-pv-plies` makes theme tagging look further into the best and played lines; `--engine-depth` is still the setting that controls engine search strength.
 - The React trainer also reads `weaknesses.json` when present and tracks local solve/fail/reveal history in browser storage.
 - `--player-mistakes-only` has effect only when `--player` is provided.
 - Precomputing every legal move for each critical position increases analysis cost roughly in proportion to the number of legal moves in those positions, but it keeps the viewer deterministic and offline-friendly.

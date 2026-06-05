@@ -5,7 +5,7 @@ import os
 from dataclasses import dataclass
 from pathlib import Path
 
-from .critical_analysis import CriticalPosition, extract_critical_positions
+from .critical_analysis import CriticalPosition, DEFAULT_THEME_PV_PLIES, extract_critical_positions
 from .engine_check import DEFAULT_STOCKFISH_PATH, EngineCheckResult, run_stockfish_smoke_test
 from .io_utils import discover_pgn_files, ensure_output_dir
 from .pgn_parser import GameRecord, parse_pgn_files
@@ -61,6 +61,7 @@ def run_pipeline(
     player_mistakes_only: bool = False,
     engine_depth: int = 14,
     eval_threshold: int = 150,
+    theme_pv_plies: int = DEFAULT_THEME_PV_PLIES,
 ) -> PipelineResult:
     pgn_files = discover_pgn_files(input_path)
     output_dir = ensure_output_dir(output_path)
@@ -76,6 +77,7 @@ def run_pipeline(
         engine_path=engine_path,
         engine_depth=engine_depth,
         eval_threshold=eval_threshold,
+        theme_pv_plies=theme_pv_plies,
     )
     critical_positions = _filter_player_mistakes_only(
         critical_positions,

@@ -22,6 +22,8 @@ MATE_THEMES = {"Checkmate", "Mate in 1", "Mate in 2", "Mate in 3", "Mate in 4", 
 TACTICAL_THEMES = {
     "Advanced pawn",
     "Attacking f2 or f7",
+    "Back rank mate",
+    "Capture the defender",
     "Defensive move",
     "Discovered attack",
     "Discovered check",
@@ -94,6 +96,15 @@ class PuzzleRecord:
     explanation: str = ""
     tags: list[str] = field(default_factory=list)
     legal_move_options: list[LegalMoveOption] = field(default_factory=list)
+
+
+@dataclass(frozen=True)
+class ReplayedMove:
+    board_before: chess.Board
+    move: chess.Move
+    board_after: chess.Board
+    mover_color: bool
+    ply_index: int
 
 
 def _eval_for_side(eval_cp: float, side_to_move: str) -> float:
@@ -573,6 +584,16 @@ def _double_check(board_after: chess.Board, mover_color: bool) -> bool:
     return len(board_after.attackers(mover_color, enemy_king_square)) >= 2
 
 
+def _back_rank_mate(board_after: chess.Board, mated_color: bool) -> bool:
+    if not board_after.is_checkmate():
+        return False
+    king_square = board_after.king(mated_color)
+    if king_square is None:
+        return False
+    king_rank = chess.square_rank(king_square)
+    return (mated_color == chess.WHITE and king_rank == 0) or (mated_color == chess.BLACK and king_rank == 7)
+
+
 def _king_area_attack_tag(board_after: chess.Board, mover_color: bool) -> str | None:
     enemy_king_square = board_after.king(not mover_color)
     if enemy_king_square is None or not board_after.is_check():
@@ -598,20 +619,84 @@ def _quiet_move_tag(board: chess.Board, board_after: chess.Board, move: chess.Mo
     return eval_loss_cp >= 250 or critical.mate_related
 
 
-def _motif_tags(critical: CriticalPosition) -> list[str]:
-    board = _safe_board(critical.fen)
-    if board is None or not critical.engine_best_move_uci:
-        return []
-    try:
-        move = chess.Move.from_uci(critical.engine_best_move_uci)
-    except ValueError:
-        return []
-    if move not in board.legal_moves:
+def _replay_pv_uci(fen: str, pv_uci: list[str]) -> list[ReplayedMove]:
+    board = _safe_board(fen)
+    if board is None:
         return []
 
-    mover_color = board.turn
-    best_option = _find_best_option(critical)
+    replayed: list[ReplayedMove] = []
+    for ply_index, move_uci in enumerate(pv_uci, start=1):
+        try:
+            move = chess.Move.from_uci(move_uci)
+        except ValueError:
+            break
+        if move not in board.legal_moves:
+            break
+
+        board_before = board.copy(stack=False)
+        mover_color = board.turn
+        board.push(move)
+        replayed.append(
+            ReplayedMove(
+                board_before=board_before,
+                move=move,
+                board_after=board.copy(stack=False),
+                mover_color=mover_color,
+                ply_index=ply_index,
+            )
+        )
+    return replayed
+
+
+def _best_line_moves(critical: CriticalPosition, best_option: LegalMoveOption | None) -> list[ReplayedMove]:
+    if best_option is not None and best_option.pv_uci:
+        return _replay_pv_uci(critical.fen, best_option.pv_uci)
+    if not critical.engine_best_move_uci:
+        return []
+    return _replay_pv_uci(critical.fen, [critical.engine_best_move_uci])
+
+
+def _capture_the_defender(line_moves: list[ReplayedMove], original_color: bool) -> bool:
+    if not line_moves:
+        return False
+
+    first_move = line_moves[0]
+    if first_move.mover_color != original_color or not first_move.board_before.is_capture(first_move.move):
+        return False
+
+    captured_piece = first_move.board_before.piece_at(first_move.move.to_square)
+    if captured_piece is None or captured_piece.color == original_color:
+        return False
+
+    defended_targets: set[chess.Square] = set()
+    for square, piece in first_move.board_before.piece_map().items():
+        if piece.color == original_color or piece.piece_type in (chess.KING, chess.PAWN):
+            continue
+        if square in first_move.board_before.attacks(first_move.move.to_square):
+            defended_targets.add(square)
+
+    if not defended_targets:
+        return False
+
+    for line_move in line_moves[1:]:
+        if line_move.mover_color != original_color or not line_move.board_before.is_capture(line_move.move):
+            continue
+        if line_move.move.to_square in defended_targets:
+            return True
+    return False
+
+
+def _motif_tags_for_replayed_move(
+    line_move: ReplayedMove,
+    critical: CriticalPosition,
+    best_option: LegalMoveOption | None,
+    original_color: bool,
+) -> list[str]:
+    board = line_move.board_before
+    move = line_move.move
+    board_after = line_move.board_after
     tags: list[str] = []
+
     tags.extend(_special_move_tags(board, move))
     if _capture_hanging_piece(board, move):
         tags.append("Hanging piece")
@@ -620,35 +705,58 @@ def _motif_tags(critical: CriticalPosition) -> list[str]:
     if _discovered_check(board, move):
         tags.append("Discovered check")
 
-    board_after = board.copy(stack=False)
-    board_after.push(move)
-
-    if best_option is not None and best_option.mover_mate is not None and best_option.mover_mate > 0 and "Checkmate" not in tags:
+    if board_after.is_checkmate():
         tags.append("Checkmate")
-    enemy_king_square = board_after.king(not mover_color)
-    if enemy_king_square is not None and board_after.is_check() and board_after.attackers(mover_color, enemy_king_square):
+        if _back_rank_mate(board_after, not original_color):
+            tags.append("Back rank mate")
+
+    enemy_king_square = board_after.king(not original_color)
+    if enemy_king_square is not None and board_after.is_check() and board_after.attackers(original_color, enemy_king_square):
         if "Checkmate" not in tags:
             tags.append("Exposed king")
-    if _double_check(board_after, mover_color):
+    if _double_check(board_after, original_color):
         tags.append("Double check")
-    if _fork_tag(board_after, move, mover_color):
+    if _fork_tag(board_after, move, original_color):
         tags.append("Fork")
-    if _pin_tag(board, board_after, mover_color):
+    if _pin_tag(board, board_after, original_color):
         tags.append("Pin")
-    if _skewer_tag(board_after, move, mover_color):
+    if _skewer_tag(board_after, move, original_color):
         tags.append("Skewer")
-    if _advanced_pawn_tag(board_after, move, mover_color):
+    if _advanced_pawn_tag(board_after, move, original_color):
         tags.append("Advanced pawn")
-    if _attacking_f2_or_f7_tag(board_after, move, mover_color):
+    if _attacking_f2_or_f7_tag(board_after, move, original_color):
         tags.append("Attacking f2 or f7")
-    king_attack_tag = _king_area_attack_tag(board_after, mover_color)
+
+    king_attack_tag = _king_area_attack_tag(board_after, original_color)
     if king_attack_tag is not None:
         tags.append(king_attack_tag)
-    if _best_move_sacrifices_material(critical, best_option):
+    if line_move.ply_index == 1 and _best_move_sacrifices_material(critical, best_option):
         tags.append("Sacrifice")
-    if _quiet_move_tag(board, board_after, move, critical):
+    if line_move.ply_index == 1 and _quiet_move_tag(board, board_after, move, critical):
         tags.append("Quiet move")
     return tags
+
+
+def _motif_tags(critical: CriticalPosition) -> list[str]:
+    best_option = _find_best_option(critical)
+    line_moves = _best_line_moves(critical, best_option)
+    if not line_moves:
+        return []
+
+    original_color = line_moves[0].mover_color
+    tags: list[str] = []
+
+    if best_option is not None and best_option.mover_mate is not None and best_option.mover_mate > 0:
+        tags.append("Checkmate")
+    if _capture_the_defender(line_moves, original_color):
+        tags.append("Capture the defender")
+
+    for line_move in line_moves:
+        if line_move.mover_color != original_color:
+            continue
+        tags.extend(_motif_tags_for_replayed_move(line_move, critical, best_option, original_color))
+
+    return _dedupe(tags)
 
 
 def _position_label(mover_eval_cp: float) -> str:

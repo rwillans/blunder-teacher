@@ -11,6 +11,10 @@ import chess.pgn
 from .engine_check import DEFAULT_STOCKFISH_PATH
 from .pgn_parser import GameRecord
 
+DISPLAY_PV_PLIES = 6
+DEFAULT_THEME_PV_PLIES = 10
+MAX_THEME_PV_PLIES = 20
+
 
 @dataclass
 class LegalMoveOption:
@@ -236,7 +240,7 @@ def _pv_to_san(board: chess.Board, pv: list[chess.Move] | None, max_plies: int =
 
 
 def _pv_to_uci(pv: list[chess.Move] | None, max_plies: int = 5) -> list[str]:
-    if not pv:
+    if not pv or max_plies <= 0:
         return []
     return [move.uci() for move in pv[:max_plies]]
 
@@ -245,8 +249,14 @@ def _analyse_legal_moves(
     engine: chess.engine.SimpleEngine,
     board: chess.Board,
     limit: chess.engine.Limit,
+    played_move_uci: str = "",
+    theme_pv_plies: int = DEFAULT_THEME_PV_PLIES,
 ) -> list[LegalMoveOption]:
     legal_move_options: list[LegalMoveOption] = []
+    candidate_pvs: dict[str, list[str]] = {}
+    display_followup_plies = max(0, DISPLAY_PV_PLIES - 1)
+    theme_followup_plies = max(0, theme_pv_plies - 1)
+
     for legal_move in list(board.legal_moves):
         candidate_board = board.copy()
         candidate_san = board.san(legal_move)
@@ -265,7 +275,8 @@ def _analyse_legal_moves(
         candidate_summary = _invert_summary(_score_to_summary(candidate_score, candidate_board.turn))
         candidate_white_summary = _score_to_summary(candidate_score, chess.WHITE)
         candidate_pv = candidate_info.get("pv")
-        candidate_pv_san = _pv_to_san(candidate_board, candidate_pv, max_plies=5)
+        candidate_pvs[legal_move.uci()] = _pv_to_uci(candidate_pv, max_plies=theme_followup_plies)
+        candidate_pv_san = _pv_to_san(candidate_board, candidate_pv, max_plies=display_followup_plies)
         legal_move_options.append(
             LegalMoveOption(
                 uci=legal_move.uci(),
@@ -281,7 +292,7 @@ def _analyse_legal_moves(
                 eval_loss_cp=0.0,
                 eval_loss_display=_format_eval_loss_display(0.0),
                 grade=_grade_eval_loss(0.0),
-                pv_uci=[legal_move.uci(), *_pv_to_uci(candidate_pv, max_plies=5)],
+                pv_uci=[legal_move.uci(), *_pv_to_uci(candidate_pv, max_plies=display_followup_plies)],
             )
         )
 
@@ -289,11 +300,14 @@ def _analyse_legal_moves(
         return legal_move_options
 
     best_option = max(legal_move_options, key=_option_rank)
+    expanded_pv_moves = {best_option.uci, played_move_uci}
     for option in legal_move_options:
         eval_loss_cp = _stable_eval_loss(best_option, option)
         option.eval_loss_cp = float(eval_loss_cp)
         option.eval_loss_display = _format_eval_loss_display(eval_loss_cp)
         option.grade = _grade_eval_loss(eval_loss_cp)
+        if option.uci in expanded_pv_moves:
+            option.pv_uci = [option.uci, *candidate_pvs.get(option.uci, [])]
 
     return legal_move_options
 
@@ -303,6 +317,7 @@ def extract_critical_positions(
     engine_path: str = DEFAULT_STOCKFISH_PATH,
     engine_depth: int = 14,
     eval_threshold: int = 150,
+    theme_pv_plies: int = DEFAULT_THEME_PV_PLIES,
 ) -> List[CriticalPosition]:
     critical_positions: List[CriticalPosition] = []
 
@@ -363,7 +378,13 @@ def extract_critical_positions(
                     mate_related = bool(pre_score.is_mate() or post_score.is_mate())
 
                     if swing >= eval_threshold:
-                        legal_move_options = _analyse_legal_moves(engine, board_before, limit)
+                        legal_move_options = _analyse_legal_moves(
+                            engine,
+                            board_before,
+                            limit,
+                            played_move_uci=played_move_uci,
+                            theme_pv_plies=theme_pv_plies,
+                        )
                         best_option = max(legal_move_options, key=_option_rank) if legal_move_options else None
                         played_option = next(
                             (option for option in legal_move_options if option.uci == played_move_uci),
