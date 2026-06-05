@@ -197,7 +197,8 @@ function isDueStat(stat, now = new Date()) {
   if (!normalized.nextDue) {
     return true;
   }
-  return new Date(normalized.nextDue).getTime() <= now.getTime();
+  const dueTime = new Date(normalized.nextDue).getTime();
+  return Number.isNaN(dueTime) || dueTime <= now.getTime();
 }
 
 function practiceGapForStats(stat) {
@@ -210,7 +211,8 @@ function nextTrainerStat(existingStat, outcome, selectedMoveUci = "") {
   const nowIso = new Date().toISOString();
 
   if (outcome === "solved") {
-    const masteryLevel = Math.min(6, existing.masteryLevel + 1);
+    const wasDue = isDueStat(existing);
+    const masteryLevel = wasDue ? Math.min(6, existing.masteryLevel + 1) : existing.masteryLevel;
     const currentStreak = existing.currentStreak + 1;
     const intervalDays = SRS_INTERVAL_DAYS[masteryLevel] || 60;
     const solved = existing.solved + 1;
@@ -222,7 +224,7 @@ function nextTrainerStat(existingStat, outcome, selectedMoveUci = "") {
       firstSelectedMove: existing.firstSelectedMove || selectedMoveUci,
       lastPracticed: nowIso,
       lastResult: "solved",
-      nextDue: dueDateFromNow(intervalDays),
+      nextDue: wasDue ? dueDateFromNow(intervalDays) : existing.nextDue,
       masteryLevel,
       currentStreak,
       bestStreak: Math.max(existing.bestStreak, currentStreak),
@@ -351,6 +353,37 @@ function practiceGapForWeakness(weakness, trainerStats) {
   }, 0);
 }
 
+function practiceStatsForWeakness(weakness, trainerStats) {
+  const puzzleIds = Array.isArray(weakness.puzzle_ids)
+    ? weakness.puzzle_ids
+    : (Array.isArray(weakness.examples) ? weakness.examples.map((example) => example.id) : []);
+  return puzzleIds.reduce(
+    (totals, puzzleId) => {
+      const stats = normalizeTrainerStat(trainerStats[puzzleId] || {});
+      return {
+        solved: totals.solved + stats.solved,
+        failed: totals.failed + stats.failed,
+        revealed: totals.revealed + stats.revealed,
+      };
+    },
+    { solved: 0, failed: 0, revealed: 0 },
+  );
+}
+
+function priorityStatus(practiceStats) {
+  const hardAttempts = practiceStats.failed + practiceStats.revealed;
+  if (!practiceStats.solved && !hardAttempts) {
+    return "Not practiced yet";
+  }
+  if (hardAttempts > practiceStats.solved) {
+    return `Needs review: ${hardAttempts} misses or reveals vs ${practiceStats.solved} solves`;
+  }
+  if (hardAttempts > 0) {
+    return `Improving: ${practiceStats.solved} solves vs ${hardAttempts} misses or reveals`;
+  }
+  return `Stable: ${practiceStats.solved} solves`;
+}
+
 function weaknessDrillLinks(weakness) {
   const links = [];
   const label = weakness.label || "";
@@ -379,12 +412,13 @@ function weaknessDrillLinks(weakness) {
 
 function WeaknessPanel({ weaknesses, trainerStats }) {
   const topWeaknesses = [...weaknesses]
+    .filter((weakness) => weakness.group_type !== "prompt_type")
     .sort((left, right) => {
       const leftGap = practiceGapForWeakness(left, trainerStats);
       const rightGap = practiceGapForWeakness(right, trainerStats);
       return rightGap - leftGap || Number(right.weakness_score || 0) - Number(left.weakness_score || 0);
     })
-    .slice(0, 5);
+    .slice(0, 4);
 
   if (!topWeaknesses.length) {
     return null;
@@ -393,13 +427,16 @@ function WeaknessPanel({ weaknesses, trainerStats }) {
   return (
     <section className="sidebar-card weakness-card">
       <div className="sidebar-section-header">
-        <h2>Weaknesses</h2>
-        <span className="counter-pill">{weaknesses.length} groups</span>
+        <h2>Training Priorities</h2>
+        <span className="counter-pill">{topWeaknesses.length} shown</span>
       </div>
+      <p className="small-print weakness-intro">
+        Recurring patterns mined from your games, ranked by repeated eval loss and your practice results.
+      </p>
       <div className="weakness-list">
         {topWeaknesses.map((weakness) => {
           const drillLinks = weaknessDrillLinks(weakness);
-          const practiceGapScore = practiceGapForWeakness(weakness, trainerStats);
+          const practiceStats = practiceStatsForWeakness(weakness, trainerStats);
           return (
             <article key={`${weakness.group_type}:${weakness.label}`} className="weakness-item">
               <div>
@@ -407,8 +444,9 @@ function WeaknessPanel({ weaknesses, trainerStats }) {
                 <h3>{weakness.label}</h3>
               </div>
               <p className="small-print">
-                {weakness.count} positions · avg {weakness.average_eval_loss_display} · gap {practiceGapScore}
+                {weakness.count} positions · avg loss {weakness.average_eval_loss_display}
               </p>
+              <p className="priority-status">{priorityStatus(practiceStats)}</p>
               {drillLinks.length ? (
                 <div className="weakness-links">
                   {drillLinks.map((link) => (
@@ -588,6 +626,7 @@ export default function App() {
   const openingCounts = countValues(puzzles.map((puzzle) => puzzle.opening));
   const sideToMoveCounts = countValues(puzzles.map((puzzle) => puzzle.side_to_move));
   const activeFilterCount = Object.values(filters).filter(Boolean).length + (reviewMode === "all" ? 0 : 1);
+  const hasWeaknesses = weaknesses.length > 0;
 
   function updateCurrentPuzzleState(mutator) {
     if (!currentPuzzle) {
@@ -709,96 +748,73 @@ export default function App() {
 
   return (
     <div className="page-shell">
-      <aside className="sidebar">
-        <div className="brand-block">
-          <span className="eyebrow">Training App</span>
-          <h1>Blunder Teacher</h1>
-          <p className="lede">
-            Review critical positions from your PGNs, try your move on the board, and reveal the engine answer only when
-            you are ready.
-          </p>
+      <aside className={hasWeaknesses ? "sidebar with-priorities" : "sidebar"}>
+        {hasWeaknesses ? (
+          <div className="sidebar-priority-column">
+            <WeaknessPanel weaknesses={weaknesses} trainerStats={trainerStats} />
+          </div>
+        ) : null}
+
+        <div className="sidebar-control-column">
+          <div className="brand-block">
+            <span className="eyebrow">Training App</span>
+            <h1>Blunder Teacher</h1>
+            <p className="lede">
+              Review critical positions from your PGNs, try your move on the board, and reveal the engine answer only when
+              you are ready.
+            </p>
+          </div>
+
+          <ReviewPanel
+            puzzles={puzzles}
+            trainerStats={trainerStats}
+            trainerSummary={trainerSummary}
+            reviewMode={reviewMode}
+            onReviewModeChange={handleReviewModeChange}
+          />
+
+          <section className="sidebar-card">
+            <div className="sidebar-section-header">
+              <h2>Filters</h2>
+              <button type="button" className="link-button muted-action" onClick={clearFilters} disabled={!activeFilterCount}>
+                Clear all
+              </button>
+            </div>
+            <p className="small-print">Narrow the training set by theme, opening, or side to move.</p>
+            <label>
+              <span>Theme</span>
+              <select value={filters.theme} onChange={(event) => handleFilterChange("theme", event.target.value)}>
+                <option value="">Any</option>
+                {themes.map((theme) => (
+                  <option key={theme} value={theme}>
+                    {theme} [{themeCounts[theme] || 0}]
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              <span>Opening</span>
+              <select value={filters.opening} onChange={(event) => handleFilterChange("opening", event.target.value)}>
+                <option value="">Any</option>
+                {openings.map((opening) => (
+                  <option key={opening} value={opening}>
+                    {opening} [{openingCounts[opening] || 0}]
+                  </option>
+                ))}
+              </select>
+            </label>
+
+            <label>
+              <span>Side to move</span>
+              <select value={filters.sideToMove} onChange={(event) => handleFilterChange("sideToMove", event.target.value)}>
+                <option value="">Any</option>
+                <option value="White">White [{sideToMoveCounts.White || 0}]</option>
+                <option value="Black">Black [{sideToMoveCounts.Black || 0}]</option>
+              </select>
+            </label>
+          </section>
         </div>
-
-        <section className="sidebar-card">
-          <div className="sidebar-section-header">
-            <h2>Session</h2>
-            <span className="counter-pill">{puzzles.length} loaded</span>
-          </div>
-          <div className="stat-grid">
-            <div className="stat-card">
-              <span className="stat-label">Visible now</span>
-              <strong>{filteredPuzzles.length}</strong>
-            </div>
-            <div className="stat-card">
-              <span className="stat-label">Openings</span>
-              <strong>{openings.length}</strong>
-            </div>
-            <div className="stat-card">
-              <span className="stat-label">Themes</span>
-              <strong>{themes.length}</strong>
-            </div>
-          </div>
-        </section>
-
-        <ReviewPanel
-          puzzles={puzzles}
-          trainerStats={trainerStats}
-          trainerSummary={trainerSummary}
-          reviewMode={reviewMode}
-          onReviewModeChange={handleReviewModeChange}
-        />
-
-        <section className="sidebar-card">
-          <div className="sidebar-section-header">
-            <h2>Filters</h2>
-            <button type="button" className="link-button muted-action" onClick={clearFilters} disabled={!activeFilterCount}>
-              Clear all
-            </button>
-          </div>
-          <p className="small-print">Narrow the training set by theme, opening, or side to move.</p>
-          <label>
-            <span>Theme</span>
-            <select value={filters.theme} onChange={(event) => handleFilterChange("theme", event.target.value)}>
-              <option value="">Any</option>
-              {themes.map((theme) => (
-                <option key={theme} value={theme}>
-                  {theme} [{themeCounts[theme] || 0}]
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label>
-            <span>Opening</span>
-            <select value={filters.opening} onChange={(event) => handleFilterChange("opening", event.target.value)}>
-              <option value="">Any</option>
-              {openings.map((opening) => (
-                <option key={opening} value={opening}>
-                  {opening} [{openingCounts[opening] || 0}]
-                </option>
-              ))}
-            </select>
-          </label>
-
-          <label>
-            <span>Side to move</span>
-            <select value={filters.sideToMove} onChange={(event) => handleFilterChange("sideToMove", event.target.value)}>
-              <option value="">Any</option>
-              <option value="White">White [{sideToMoveCounts.White || 0}]</option>
-              <option value="Black">Black [{sideToMoveCounts.Black || 0}]</option>
-            </select>
-          </label>
-        </section>
-
-        <section className="sidebar-card">
-          <h2>How To Use It</h2>
-          <p className="small-print">
-            Pick a piece, then click a destination square. Use <strong>Check move</strong> to grade your choice, or
-            reveal the answer if you want the engine line and explanation.
-          </p>
-        </section>
-
-        <WeaknessPanel weaknesses={weaknesses} trainerStats={trainerStats} />
       </aside>
 
       <main className="main-panel">
