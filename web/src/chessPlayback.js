@@ -4,11 +4,14 @@ function uciToMove(uci) {
   if (!uci || uci.length < 4) {
     return null;
   }
-  return {
+  const move = {
     from: uci.slice(0, 2),
     to: uci.slice(2, 4),
-    promotion: uci.length > 4 ? uci[4] : undefined,
   };
+  if (uci.length > 4) {
+    move.promotion = uci[4];
+  }
+  return move;
 }
 
 export function buildLinePositions(initialFen, pvUci) {

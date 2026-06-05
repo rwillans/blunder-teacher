@@ -1,4 +1,4 @@
-import React from "react";
+import React, { useEffect } from "react";
 
 import { buildLinePositions } from "../chessPlayback";
 import { BoardShell } from "./BoardShell";
@@ -29,6 +29,29 @@ function lineMoves(option) {
   }
   const pv = Array.isArray(option.pv_uci) ? option.pv_uci.filter(Boolean) : [];
   return pv.length ? pv : [option.uci].filter(Boolean);
+}
+
+function buildOptionLinePositions(puzzle, option) {
+  const moves = lineMoves(option);
+  const positions = buildLinePositions(puzzle.fen, moves);
+  if (positions.length > 1 || !option?.resulting_fen || !option?.uci) {
+    return positions;
+  }
+
+  const continuationMoves = moves[0] === option.uci ? moves.slice(1) : moves;
+  const continuationPositions = buildLinePositions(option.resulting_fen, continuationMoves);
+  if (continuationPositions.length <= 1) {
+    return positions;
+  }
+
+  return [
+    { fen: puzzle.fen, moveUci: "", san: "Start", ply: 0 },
+    { fen: option.resulting_fen, moveUci: option.uci, san: option.san || option.uci, ply: 1 },
+    ...continuationPositions.slice(1).map((position, index) => ({
+      ...position,
+      ply: index + 2,
+    })),
+  ];
 }
 
 function formatDue(nextDue) {
@@ -123,6 +146,7 @@ export function PuzzleWorkspace({
   onPrevious,
   onNext,
   trainerStats,
+  trainerSummary = {},
 }) {
   const lookup = moveLookup(puzzle);
   const selectedMove = puzzleState.selectedMoveUci ? lookup[puzzleState.selectedMoveUci] : null;
@@ -133,7 +157,7 @@ export function PuzzleWorkspace({
   const bestMove = puzzle.best_move_san || puzzle.best_move_uci || "Unavailable";
   const activeLineType = puzzleState.playbackLineType || (submittedMove ? "submitted" : puzzleState.revealed ? "best" : "");
   const activeLineOption = activeLineType === "best" ? bestOption : submittedMove;
-  const playbackPositions = activeLineOption ? buildLinePositions(puzzle.fen, lineMoves(activeLineOption)) : [];
+  const playbackPositions = activeLineOption ? buildOptionLinePositions(puzzle, activeLineOption) : [];
   const playbackMaxPly = Math.max(0, playbackPositions.length - 1);
   const playbackPly = Math.min(Number(puzzleState.playbackPly || 0), playbackMaxPly);
   const playbackPosition = playbackPositions[playbackPly] || null;
@@ -149,6 +173,29 @@ export function PuzzleWorkspace({
     .filter((link) => link.url);
   const lichessOpeningTrainingUrl = buildLichessOpeningTrainingUrl(puzzle.opening);
   const lichessOpeningUrl = buildLichessOpeningUrl(puzzle.opening);
+
+  useEffect(() => {
+    if (!activeLineType || playbackMaxPly <= 1 || playbackPly >= playbackMaxPly) {
+      return undefined;
+    }
+    if (!submittedMove && !puzzleState.revealed) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      onSetPlaybackPly(playbackPly + 1);
+    }, playbackPly <= 1 ? 700 : 900);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    activeLineType,
+    playbackMaxPly,
+    playbackPly,
+    puzzle.id,
+    puzzleState.revealed,
+    submittedMove,
+    onSetPlaybackPly,
+  ]);
 
   return (
     <section className="workspace-grid">
@@ -235,18 +282,18 @@ export function PuzzleWorkspace({
           <dl>
             <div>
               <dt>Total score</dt>
-              <dd>{trainerStats.score || 0}</dd>
+              <dd>{trainerSummary.totalScore || 0}</dd>
             </div>
             <div>
-              <dt>Attempts</dt>
+              <dt>Trainer streak</dt>
               <dd>
-                {trainerStats.solved || 0} solved · {trainerStats.failed || 0} missed
+                {trainerSummary.currentStreak || 0} current · {trainerSummary.bestStreak || 0} best
               </dd>
             </div>
             <div>
-              <dt>Streak</dt>
+              <dt>This puzzle</dt>
               <dd>
-                {trainerStats.currentStreak || 0} current · {trainerStats.bestStreak || 0} best
+                {trainerStats.solved || 0} solved · {trainerStats.failed || 0} missed
               </dd>
             </div>
             <div>

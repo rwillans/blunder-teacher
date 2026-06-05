@@ -11,6 +11,7 @@ import {
 const DEFAULT_PUZZLES_URL = import.meta.env.VITE_PUZZLES_URL || (import.meta.env.DEV ? "/api/puzzles" : "/puzzles.json");
 const DEFAULT_WEAKNESSES_URL = import.meta.env.VITE_WEAKNESSES_URL || (import.meta.env.DEV ? "/api/weaknesses" : "/weaknesses.json");
 const TRAINER_STATS_KEY = "blunder-teacher:trainer-stats:v1";
+const TRAINER_SUMMARY_KEY = "blunder-teacher:trainer-summary:v1";
 const SRS_INTERVAL_DAYS = [0, 1, 3, 7, 14, 30, 60];
 const REVIEW_MODES = [
   { id: "all", label: "All" },
@@ -105,6 +106,49 @@ function normalizeTrainerStats(rawStats) {
   return Object.fromEntries(Object.entries(rawStats || {}).map(([puzzleId, stat]) => [puzzleId, normalizeTrainerStat(stat)]));
 }
 
+function buildTrainerSummaryFromStats(stats = {}) {
+  const summary = {
+    attempted: 0,
+    solved: 0,
+    failed: 0,
+    revealed: 0,
+    currentStreak: 0,
+    bestStreak: 0,
+    totalScore: 0,
+    lastPracticed: "",
+    lastResult: "",
+  };
+
+  for (const stat of Object.values(normalizeTrainerStats(stats))) {
+    summary.attempted += stat.attempted;
+    summary.solved += stat.solved;
+    summary.failed += stat.failed;
+    summary.revealed += stat.revealed;
+    summary.bestStreak = Math.max(summary.bestStreak, stat.bestStreak);
+    summary.totalScore += stat.score;
+    if (stat.lastPracticed && (!summary.lastPracticed || stat.lastPracticed > summary.lastPracticed)) {
+      summary.lastPracticed = stat.lastPracticed;
+      summary.lastResult = stat.lastResult;
+    }
+  }
+
+  return summary;
+}
+
+function normalizeTrainerSummary(summary = {}) {
+  return {
+    attempted: Number(summary.attempted || 0),
+    solved: Number(summary.solved || 0),
+    failed: Number(summary.failed || 0),
+    revealed: Number(summary.revealed || 0),
+    currentStreak: Number(summary.currentStreak || 0),
+    bestStreak: Number(summary.bestStreak || 0),
+    totalScore: Number(summary.totalScore ?? summary.score ?? 0),
+    lastPracticed: summary.lastPracticed || "",
+    lastResult: summary.lastResult || "",
+  };
+}
+
 function loadTrainerStats() {
   if (typeof window === "undefined") {
     return {};
@@ -114,6 +158,22 @@ function loadTrainerStats() {
     return rawStats ? normalizeTrainerStats(JSON.parse(rawStats)) : {};
   } catch {
     return {};
+  }
+}
+
+function loadTrainerSummary() {
+  if (typeof window === "undefined") {
+    return normalizeTrainerSummary();
+  }
+  try {
+    const rawSummary = window.localStorage.getItem(TRAINER_SUMMARY_KEY);
+    if (rawSummary) {
+      return normalizeTrainerSummary(JSON.parse(rawSummary));
+    }
+    const rawStats = window.localStorage.getItem(TRAINER_STATS_KEY);
+    return rawStats ? buildTrainerSummaryFromStats(JSON.parse(rawStats)) : normalizeTrainerSummary();
+  } catch {
+    return normalizeTrainerSummary();
   }
 }
 
@@ -198,6 +258,54 @@ function nextTrainerStat(existingStat, outcome, selectedMoveUci = "") {
       masteryLevel: 0,
       currentStreak: 0,
       score: existing.solved * 10 - existing.failed * 5 - revealed * 3,
+    };
+  }
+
+  return {
+    ...existing,
+    lastPracticed: nowIso,
+  };
+}
+
+function nextTrainerSummary(existingSummary, outcome) {
+  const existing = normalizeTrainerSummary(existingSummary);
+  const nowIso = new Date().toISOString();
+
+  if (outcome === "solved") {
+    const currentStreak = existing.currentStreak + 1;
+    const scoreGain = 10 + Math.min(10, currentStreak * 2);
+    return {
+      ...existing,
+      attempted: existing.attempted + 1,
+      solved: existing.solved + 1,
+      currentStreak,
+      bestStreak: Math.max(existing.bestStreak, currentStreak),
+      totalScore: existing.totalScore + scoreGain,
+      lastPracticed: nowIso,
+      lastResult: "solved",
+    };
+  }
+
+  if (outcome === "failed") {
+    return {
+      ...existing,
+      attempted: existing.attempted + 1,
+      failed: existing.failed + 1,
+      currentStreak: 0,
+      totalScore: existing.totalScore - 5,
+      lastPracticed: nowIso,
+      lastResult: "again",
+    };
+  }
+
+  if (outcome === "revealed") {
+    return {
+      ...existing,
+      revealed: existing.revealed + 1,
+      currentStreak: 0,
+      totalScore: existing.totalScore - 3,
+      lastPracticed: nowIso,
+      lastResult: "again",
     };
   }
 
@@ -318,12 +426,9 @@ function WeaknessPanel({ weaknesses, trainerStats }) {
   );
 }
 
-function ReviewPanel({ puzzles, trainerStats, reviewMode, onReviewModeChange }) {
+function ReviewPanel({ puzzles, trainerStats, trainerSummary, reviewMode, onReviewModeChange }) {
   const counts = reviewCounts(puzzles, trainerStats);
-  const totalScore = Object.values(trainerStats).reduce(
-    (score, stat) => score + normalizeTrainerStat(stat).score,
-    0,
-  );
+  const summary = normalizeTrainerSummary(trainerSummary);
 
   return (
     <section className="sidebar-card review-card">
@@ -342,7 +447,7 @@ function ReviewPanel({ puzzles, trainerStats, reviewMode, onReviewModeChange }) 
         </div>
         <div className="stat-card">
           <span className="stat-label">Score</span>
-          <strong>{totalScore}</strong>
+          <strong>{summary.totalScore}</strong>
         </div>
       </div>
       <div className="review-mode-grid">
@@ -368,6 +473,7 @@ export default function App() {
   const [weaknesses, setWeaknesses] = useState([]);
   const [puzzleStates, setPuzzleStates] = useState({});
   const [trainerStats, setTrainerStats] = useState(loadTrainerStats);
+  const [trainerSummary, setTrainerSummary] = useState(loadTrainerSummary);
   const [cursor, setCursor] = useState(0);
   const [reviewMode, setReviewMode] = useState("all");
   const [filters, setFilters] = useState({
@@ -444,6 +550,13 @@ export default function App() {
     }
     window.localStorage.setItem(TRAINER_STATS_KEY, JSON.stringify(trainerStats));
   }, [trainerStats]);
+
+  useEffect(() => {
+    if (typeof window === "undefined") {
+      return;
+    }
+    window.localStorage.setItem(TRAINER_SUMMARY_KEY, JSON.stringify(trainerSummary));
+  }, [trainerSummary]);
 
   const filteredPuzzles = puzzles.filter((puzzle) => {
     const tags = Array.isArray(puzzle.tags) ? puzzle.tags : [];
@@ -526,6 +639,10 @@ export default function App() {
     });
   }
 
+  function recordTrainerSummaryResult(outcome) {
+    setTrainerSummary((currentSummary) => nextTrainerSummary(currentSummary, outcome));
+  }
+
   function handleMoveSelect(selection) {
     updateCurrentPuzzleState((existing) => ({
       ...existing,
@@ -547,6 +664,7 @@ export default function App() {
     if (currentPuzzle && selectedMove && !currentPuzzleState.submittedMoveUci) {
       const solved = isSolvedMove(selectedMove);
       recordTrainerResult(currentPuzzle.id, (existing) => nextTrainerStat(existing, solved ? "solved" : "failed", selectedMove.uci));
+      recordTrainerSummaryResult(solved ? "solved" : "failed");
     }
     updateCurrentPuzzleState((existing) => ({
       ...existing,
@@ -560,6 +678,7 @@ export default function App() {
     if (currentPuzzle && currentPuzzleState && !currentPuzzleState.revealed) {
       const outcome = currentPuzzleState.submittedMoveUci ? "viewed" : "revealed";
       recordTrainerResult(currentPuzzle.id, (existing) => nextTrainerStat(existing, outcome));
+      recordTrainerSummaryResult(outcome);
     }
     updateCurrentPuzzleState((existing) => ({
       ...existing,
@@ -624,6 +743,7 @@ export default function App() {
         <ReviewPanel
           puzzles={puzzles}
           trainerStats={trainerStats}
+          trainerSummary={trainerSummary}
           reviewMode={reviewMode}
           onReviewModeChange={handleReviewModeChange}
         />
@@ -733,6 +853,7 @@ export default function App() {
             onSetPlaybackLine={handleSetPlaybackLine}
             onSetPlaybackPly={handleSetPlaybackPly}
             trainerStats={normalizeTrainerStat(trainerStats[currentPuzzle.id])}
+            trainerSummary={normalizeTrainerSummary(trainerSummary)}
             onPrevious={() => setCursor((value) => Math.max(0, value - 1))}
             onNext={() => setCursor((value) => Math.min(filteredPuzzles.length - 1, value + 1))}
           />
