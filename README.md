@@ -98,5 +98,7 @@ The repo includes a React/Vite frontend in [web/README.md](/D:/positron_projects
 - Puzzle prompt types are instructional labels, while `tags` are the Lichess-style study themes used by the trainer filter.
 - `--theme-pv-plies` makes theme tagging look further into the best and played lines; `--engine-depth` is still the setting that controls engine search strength.
 - The React trainer also reads `weaknesses.json` when present and tracks local solve/fail/reveal history in browser storage.
+- Browser-local scoring and spaced repetition add `Due`, `Again`, `New`, and `Mastered` review queues without changing the JSON export format.
+- After checking or revealing a move, the board can step through the relevant engine line from `legal_move_options[].pv_uci`.
 - `--player-mistakes-only` has effect only when `--player` is provided.
 - Precomputing every legal move for each critical position increases analysis cost roughly in proportion to the number of legal moves in those positions, but it keeps the viewer deterministic and offline-friendly.

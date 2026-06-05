@@ -78,18 +78,20 @@ function buildPieceImage(piece) {
   );
 }
 
-export function BoardShell({ puzzle, puzzleState, onMoveSelect }) {
+export function BoardShell({ puzzle, puzzleState, onMoveSelect, playbackFen = "", playbackMoveUci = "" }) {
   const options = Array.isArray(puzzle.legal_move_options) ? puzzle.legal_move_options : [];
   const lookup = Object.fromEntries(options.map((option) => [option.uci, option]));
   const submittedMove = puzzleState.submittedMoveUci ? lookup[puzzleState.submittedMoveUci] : null;
-  const displayedFen = submittedMove ? submittedMove.resulting_fen : puzzle.fen;
+  const displayedFen = playbackFen || (submittedMove ? submittedMove.resulting_fen : puzzle.fen);
   const boardMap = parseFenBoard(displayedFen);
   const groupedMoves = movesBySource(puzzle);
-  const selectedSource = submittedMove ? "" : puzzleState.sourceSquare;
+  const boardLocked = Boolean(submittedMove || playbackFen);
+  const selectedSource = boardLocked ? "" : puzzleState.sourceSquare;
   const targetSquares = selectedSource ? (groupedMoves[selectedSource] || []).map((option) => option.uci.slice(2, 4)) : [];
+  const highlightedMoveUci = playbackMoveUci || (submittedMove ? submittedMove.uci : "");
 
   function handleSquareClick(square) {
-    if (submittedMove) {
+    if (boardLocked) {
       return;
     }
 
@@ -130,8 +132,9 @@ export function BoardShell({ puzzle, puzzleState, onMoveSelect }) {
             const fileIndex = FILES.indexOf(square[0]);
             const rank = Number(square[1]);
             const dark = (fileIndex + rank) % 2 === 0;
-            const isSubmitted =
-              submittedMove && (submittedMove.uci.startsWith(square) || submittedMove.uci.slice(2, 4) === square);
+            const isSubmitted = highlightedMoveUci && (
+              highlightedMoveUci.startsWith(square) || highlightedMoveUci.slice(2, 4) === square
+            );
 
             const className = [
               "board-square",

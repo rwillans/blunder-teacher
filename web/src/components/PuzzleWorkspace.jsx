@@ -1,5 +1,6 @@
 import React from "react";
 
+import { buildLinePositions } from "../chessPlayback";
 import { BoardShell } from "./BoardShell";
 import {
   buildLichessAnalysisUrl,
@@ -14,6 +15,99 @@ function moveLookup(puzzle) {
   return Object.fromEntries(options.map((option) => [option.uci, option]));
 }
 
+function findBestOption(puzzle, lookup) {
+  if (puzzle.best_move_uci && lookup[puzzle.best_move_uci]) {
+    return lookup[puzzle.best_move_uci];
+  }
+  const options = Array.isArray(puzzle.legal_move_options) ? puzzle.legal_move_options : [];
+  return options.find((option) => Number(option.eval_loss_cp || 0) === 0) || null;
+}
+
+function lineMoves(option) {
+  if (!option) {
+    return [];
+  }
+  const pv = Array.isArray(option.pv_uci) ? option.pv_uci.filter(Boolean) : [];
+  return pv.length ? pv : [option.uci].filter(Boolean);
+}
+
+function formatDue(nextDue) {
+  if (!nextDue) {
+    return "Now";
+  }
+  const dueTime = new Date(nextDue).getTime();
+  if (Number.isNaN(dueTime)) {
+    return "Now";
+  }
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  const days = Math.ceil((dueTime - today.getTime()) / (24 * 60 * 60 * 1000));
+  if (days <= 0) {
+    return "Today";
+  }
+  if (days === 1) {
+    return "Tomorrow";
+  }
+  return `${days} days`;
+}
+
+function LinePlaybackControls({
+  label,
+  positions,
+  playbackPly,
+  canShowBest,
+  activeLineType,
+  onSetPlaybackLine,
+  onSetPlaybackPly,
+}) {
+  const maxPly = Math.max(0, positions.length - 1);
+  if (!maxPly) {
+    return null;
+  }
+  const safePly = Math.min(playbackPly, maxPly);
+  const currentPosition = positions[safePly] || positions[0];
+
+  return (
+    <div className="line-playback">
+      <div className="line-playback-header">
+        <strong>{label}</strong>
+        <span className="small-print">
+          {safePly} / {maxPly} · {currentPosition.san}
+        </span>
+      </div>
+      {canShowBest ? (
+        <div className="segmented-control">
+          <button
+            type="button"
+            className={activeLineType === "submitted" ? "segment-button active" : "segment-button"}
+            onClick={() => onSetPlaybackLine("submitted")}
+          >
+            Your line
+          </button>
+          <button
+            type="button"
+            className={activeLineType === "best" ? "segment-button active" : "segment-button"}
+            onClick={() => onSetPlaybackLine("best")}
+          >
+            Best line
+          </button>
+        </div>
+      ) : null}
+      <div className="playback-actions">
+        <button type="button" className="ghost-button" onClick={() => onSetPlaybackPly(0)} disabled={safePly === 0}>
+          Start
+        </button>
+        <button type="button" className="ghost-button" onClick={() => onSetPlaybackPly(safePly - 1)} disabled={safePly === 0}>
+          Previous
+        </button>
+        <button type="button" onClick={() => onSetPlaybackPly(safePly + 1)} disabled={safePly >= maxPly}>
+          Next
+        </button>
+      </div>
+    </div>
+  );
+}
+
 export function PuzzleWorkspace({
   puzzle,
   puzzleState,
@@ -24,15 +118,28 @@ export function PuzzleWorkspace({
   onSubmitMove,
   onReveal,
   onReset,
+  onSetPlaybackLine,
+  onSetPlaybackPly,
   onPrevious,
   onNext,
+  trainerStats,
 }) {
   const lookup = moveLookup(puzzle);
   const selectedMove = puzzleState.selectedMoveUci ? lookup[puzzleState.selectedMoveUci] : null;
   const submittedMove = puzzleState.submittedMoveUci ? lookup[puzzleState.submittedMoveUci] : null;
+  const bestOption = findBestOption(puzzle, lookup);
   const tags = Array.isArray(puzzle.tags) ? puzzle.tags : [];
   const playedMove = puzzle.played_move_san || puzzle.played_move_uci || "Unavailable";
   const bestMove = puzzle.best_move_san || puzzle.best_move_uci || "Unavailable";
+  const activeLineType = puzzleState.playbackLineType || (submittedMove ? "submitted" : puzzleState.revealed ? "best" : "");
+  const activeLineOption = activeLineType === "best" ? bestOption : submittedMove;
+  const playbackPositions = activeLineOption ? buildLinePositions(puzzle.fen, lineMoves(activeLineOption)) : [];
+  const playbackMaxPly = Math.max(0, playbackPositions.length - 1);
+  const playbackPly = Math.min(Number(puzzleState.playbackPly || 0), playbackMaxPly);
+  const playbackPosition = playbackPositions[playbackPly] || null;
+  const playbackFen = playbackPosition ? playbackPosition.fen : "";
+  const playbackMoveUci = playbackPosition ? playbackPosition.moveUci : "";
+  const canShowBestLine = Boolean(submittedMove && puzzleState.revealed && bestOption);
   const currentBoardLichessUrl = submittedMove ? buildLichessAnalysisUrl(submittedMove.resulting_fen, puzzle.side_to_move) : "";
   const lichessThemeLinks = tags
     .map((tag) => ({ label: tag, url: buildLichessThemeUrl(tag) }))
@@ -71,7 +178,13 @@ export function PuzzleWorkspace({
           </div>
         </div>
 
-        <BoardShell puzzle={puzzle} puzzleState={puzzleState} onMoveSelect={onMoveSelect} />
+        <BoardShell
+          puzzle={puzzle}
+          puzzleState={puzzleState}
+          onMoveSelect={onMoveSelect}
+          playbackFen={playbackFen}
+          playbackMoveUci={playbackMoveUci}
+        />
       </div>
 
       <aside className="workspace-sidebar">
@@ -117,6 +230,32 @@ export function PuzzleWorkspace({
           </dl>
         </section>
 
+        <section className="detail-card score-card">
+          <span className="eyebrow">Score</span>
+          <dl>
+            <div>
+              <dt>Total score</dt>
+              <dd>{trainerStats.score || 0}</dd>
+            </div>
+            <div>
+              <dt>Attempts</dt>
+              <dd>
+                {trainerStats.solved || 0} solved · {trainerStats.failed || 0} missed
+              </dd>
+            </div>
+            <div>
+              <dt>Streak</dt>
+              <dd>
+                {trainerStats.currentStreak || 0} current · {trainerStats.bestStreak || 0} best
+              </dd>
+            </div>
+            <div>
+              <dt>Next review</dt>
+              <dd>{formatDue(trainerStats.nextDue)}</dd>
+            </div>
+          </dl>
+        </section>
+
         <section className="selection-card detail-card">
           <span className="eyebrow">Pending Move</span>
           <strong>{selectedMove ? `${selectedMove.san} (${selectedMove.uci})` : "Choose a piece, then choose a square"}</strong>
@@ -158,6 +297,15 @@ export function PuzzleWorkspace({
                 <dd>{submittedMove.pv_san || "Unavailable"}</dd>
               </div>
             </dl>
+            <LinePlaybackControls
+              label={activeLineType === "best" ? "Best engine line" : "Your move line"}
+              positions={playbackPositions}
+              playbackPly={playbackPly}
+              canShowBest={canShowBestLine}
+              activeLineType={activeLineType}
+              onSetPlaybackLine={onSetPlaybackLine}
+              onSetPlaybackPly={onSetPlaybackPly}
+            />
             {currentBoardLichessUrl ? (
               <div className="lichess-link-stack">
                 <div className="lichess-link-group">
@@ -217,6 +365,15 @@ export function PuzzleWorkspace({
                 <dd>{puzzle.best_pv || "No principal variation recorded."}</dd>
               </div>
             </dl>
+            <LinePlaybackControls
+              label={activeLineType === "submitted" ? "Your move line" : "Best engine line"}
+              positions={playbackPositions}
+              playbackPly={playbackPly}
+              canShowBest={canShowBestLine}
+              activeLineType={activeLineType}
+              onSetPlaybackLine={onSetPlaybackLine}
+              onSetPlaybackPly={onSetPlaybackPly}
+            />
             <p>{puzzle.explanation || "No explanation available."}</p>
           </section>
         ) : null}

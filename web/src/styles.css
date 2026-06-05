@@ -258,6 +258,34 @@ code {
   flex-wrap: wrap;
 }
 
+.review-stat-grid {
+  margin-top: 0.85rem;
+}
+
+.review-mode-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px;
+  margin-top: 0.85rem;
+}
+
+.review-mode-button,
+.segment-button {
+  border: 1px solid var(--line);
+  background: rgba(255, 255, 255, 0.5);
+  color: var(--accent-strong);
+  padding: 0.62rem 0.75rem;
+  font-size: 0.88rem;
+  font-weight: 700;
+}
+
+.review-mode-button.active,
+.segment-button.active {
+  background: var(--accent-soft);
+  color: var(--accent-strong);
+  box-shadow: inset 0 0 0 1px rgba(15, 118, 110, 0.2);
+}
+
 .board-frame {
   width: min(100%, 560px);
   padding: 18px;
@@ -332,6 +360,39 @@ code {
 
 .pending-actions {
   margin: 0.9rem 0 0.7rem;
+}
+
+.line-playback {
+  display: grid;
+  gap: 0.65rem;
+  margin: 1rem 0;
+  padding: 0.85rem;
+  border-radius: 8px;
+  border: 1px solid rgba(28, 25, 23, 0.08);
+  background: rgba(255, 255, 255, 0.42);
+}
+
+.line-playback-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+}
+
+.line-playback-header .small-print {
+  margin: 0;
+  text-align: right;
+}
+
+.segmented-control,
+.playback-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+
+.playback-actions button {
+  padding: 0.62rem 0.8rem;
 }
 
 .ghost-button {

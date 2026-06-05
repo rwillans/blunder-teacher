@@ -11,6 +11,14 @@ import {
 const DEFAULT_PUZZLES_URL = import.meta.env.VITE_PUZZLES_URL || (import.meta.env.DEV ? "/api/puzzles" : "/puzzles.json");
 const DEFAULT_WEAKNESSES_URL = import.meta.env.VITE_WEAKNESSES_URL || (import.meta.env.DEV ? "/api/weaknesses" : "/weaknesses.json");
 const TRAINER_STATS_KEY = "blunder-teacher:trainer-stats:v1";
+const SRS_INTERVAL_DAYS = [0, 1, 3, 7, 14, 30, 60];
+const REVIEW_MODES = [
+  { id: "all", label: "All" },
+  { id: "due", label: "Due" },
+  { id: "again", label: "Again" },
+  { id: "new", label: "New" },
+  { id: "mastered", label: "Mastered" },
+];
 
 function buildPuzzleState(puzzle) {
   return {
@@ -18,6 +26,8 @@ function buildPuzzleState(puzzle) {
     submittedMoveUci: "",
     revealed: false,
     sourceSquare: "",
+    playbackLineType: "",
+    playbackPly: 0,
     puzzleId: puzzle.id,
   };
 }
@@ -55,13 +65,53 @@ function countValues(values) {
   return counts;
 }
 
+function todayStart() {
+  const today = new Date();
+  today.setHours(0, 0, 0, 0);
+  return today;
+}
+
+function dueDateFromNow(days) {
+  const dueDate = todayStart();
+  dueDate.setDate(dueDate.getDate() + days);
+  return dueDate.toISOString();
+}
+
+function normalizeTrainerStat(stat = {}) {
+  const attempted = Number(stat.attempted || 0);
+  const solved = Number(stat.solved || 0);
+  const failed = Number(stat.failed || 0);
+  const revealed = Number(stat.revealed || 0);
+  const masteryLevel = Number(stat.masteryLevel || 0);
+  const currentStreak = Number(stat.currentStreak || 0);
+  const bestStreak = Number(stat.bestStreak || 0);
+  return {
+    attempted,
+    solved,
+    failed,
+    revealed,
+    firstSelectedMove: stat.firstSelectedMove || "",
+    lastPracticed: stat.lastPracticed || "",
+    lastResult: stat.lastResult || "",
+    nextDue: stat.nextDue || "",
+    masteryLevel,
+    currentStreak,
+    bestStreak,
+    score: Number(stat.score || solved * 10 + masteryLevel * 5 + currentStreak * 2 - failed * 5 - revealed * 3),
+  };
+}
+
+function normalizeTrainerStats(rawStats) {
+  return Object.fromEntries(Object.entries(rawStats || {}).map(([puzzleId, stat]) => [puzzleId, normalizeTrainerStat(stat)]));
+}
+
 function loadTrainerStats() {
   if (typeof window === "undefined") {
     return {};
   }
   try {
     const rawStats = window.localStorage.getItem(TRAINER_STATS_KEY);
-    return rawStats ? JSON.parse(rawStats) : {};
+    return rawStats ? normalizeTrainerStats(JSON.parse(rawStats)) : {};
   } catch {
     return {};
   }
@@ -77,6 +127,110 @@ function isSolvedMove(move) {
     return false;
   }
   return ["Excellent", "Good"].includes(move.grade) || Number(move.eval_loss_cp || 0) <= 50;
+}
+
+function isDueStat(stat, now = new Date()) {
+  const normalized = normalizeTrainerStat(stat);
+  if (!normalized.attempted && !normalized.revealed) {
+    return true;
+  }
+  if (!normalized.nextDue) {
+    return true;
+  }
+  return new Date(normalized.nextDue).getTime() <= now.getTime();
+}
+
+function practiceGapForStats(stat) {
+  const normalized = normalizeTrainerStat(stat);
+  return normalized.failed + normalized.revealed - normalized.solved;
+}
+
+function nextTrainerStat(existingStat, outcome, selectedMoveUci = "") {
+  const existing = normalizeTrainerStat(existingStat);
+  const nowIso = new Date().toISOString();
+
+  if (outcome === "solved") {
+    const masteryLevel = Math.min(6, existing.masteryLevel + 1);
+    const currentStreak = existing.currentStreak + 1;
+    const intervalDays = SRS_INTERVAL_DAYS[masteryLevel] || 60;
+    const solved = existing.solved + 1;
+    const attempted = existing.attempted + 1;
+    return {
+      ...existing,
+      attempted,
+      solved,
+      firstSelectedMove: existing.firstSelectedMove || selectedMoveUci,
+      lastPracticed: nowIso,
+      lastResult: "solved",
+      nextDue: dueDateFromNow(intervalDays),
+      masteryLevel,
+      currentStreak,
+      bestStreak: Math.max(existing.bestStreak, currentStreak),
+      score: solved * 10 + masteryLevel * 5 + currentStreak * 2 - existing.failed * 5 - existing.revealed * 3,
+    };
+  }
+
+  if (outcome === "failed") {
+    const failed = existing.failed + 1;
+    const attempted = existing.attempted + 1;
+    return {
+      ...existing,
+      attempted,
+      failed,
+      firstSelectedMove: existing.firstSelectedMove || selectedMoveUci,
+      lastPracticed: nowIso,
+      lastResult: "again",
+      nextDue: new Date().toISOString(),
+      masteryLevel: 0,
+      currentStreak: 0,
+      score: existing.solved * 10 - failed * 5 - existing.revealed * 3,
+    };
+  }
+
+  if (outcome === "revealed") {
+    const revealed = existing.revealed + 1;
+    return {
+      ...existing,
+      revealed,
+      lastPracticed: nowIso,
+      lastResult: "again",
+      nextDue: new Date().toISOString(),
+      masteryLevel: 0,
+      currentStreak: 0,
+      score: existing.solved * 10 - existing.failed * 5 - revealed * 3,
+    };
+  }
+
+  return {
+    ...existing,
+    lastPracticed: nowIso,
+  };
+}
+
+function puzzleMatchesReviewMode(puzzle, trainerStats, reviewMode) {
+  const stats = normalizeTrainerStat(trainerStats[puzzle.id]);
+  if (reviewMode === "due") {
+    return isDueStat(stats);
+  }
+  if (reviewMode === "again") {
+    return stats.lastResult === "again" || practiceGapForStats(stats) > 0;
+  }
+  if (reviewMode === "new") {
+    return !stats.attempted && !stats.revealed;
+  }
+  if (reviewMode === "mastered") {
+    return stats.masteryLevel >= 3;
+  }
+  return true;
+}
+
+function reviewCounts(puzzles, trainerStats) {
+  return Object.fromEntries(
+    REVIEW_MODES.map((mode) => [
+      mode.id,
+      puzzles.filter((puzzle) => puzzleMatchesReviewMode(puzzle, trainerStats, mode.id)).length,
+    ]),
+  );
 }
 
 function practiceGapForWeakness(weakness, trainerStats) {
@@ -164,6 +318,49 @@ function WeaknessPanel({ weaknesses, trainerStats }) {
   );
 }
 
+function ReviewPanel({ puzzles, trainerStats, reviewMode, onReviewModeChange }) {
+  const counts = reviewCounts(puzzles, trainerStats);
+  const totalScore = Object.values(trainerStats).reduce(
+    (score, stat) => score + normalizeTrainerStat(stat).score,
+    0,
+  );
+
+  return (
+    <section className="sidebar-card review-card">
+      <div className="sidebar-section-header">
+        <h2>Review</h2>
+        <span className="counter-pill">{counts.due || 0} due</span>
+      </div>
+      <div className="stat-grid review-stat-grid">
+        <div className="stat-card">
+          <span className="stat-label">Again</span>
+          <strong>{counts.again || 0}</strong>
+        </div>
+        <div className="stat-card">
+          <span className="stat-label">New</span>
+          <strong>{counts.new || 0}</strong>
+        </div>
+        <div className="stat-card">
+          <span className="stat-label">Score</span>
+          <strong>{totalScore}</strong>
+        </div>
+      </div>
+      <div className="review-mode-grid">
+        {REVIEW_MODES.map((mode) => (
+          <button
+            key={mode.id}
+            type="button"
+            className={reviewMode === mode.id ? "review-mode-button active" : "review-mode-button"}
+            onClick={() => onReviewModeChange(mode.id)}
+          >
+            {mode.label} [{counts[mode.id] || 0}]
+          </button>
+        ))}
+      </div>
+    </section>
+  );
+}
+
 export default function App() {
   const [status, setStatus] = useState("loading");
   const [errorMessage, setErrorMessage] = useState("");
@@ -172,6 +369,7 @@ export default function App() {
   const [puzzleStates, setPuzzleStates] = useState({});
   const [trainerStats, setTrainerStats] = useState(loadTrainerStats);
   const [cursor, setCursor] = useState(0);
+  const [reviewMode, setReviewMode] = useState("all");
   const [filters, setFilters] = useState({
     theme: "",
     opening: "",
@@ -258,6 +456,13 @@ export default function App() {
     if (filters.sideToMove && puzzle.side_to_move !== filters.sideToMove) {
       return false;
     }
+    const puzzleState = puzzleStates[puzzle.id];
+    if (reviewMode !== "all" && (puzzleState?.submittedMoveUci || puzzleState?.revealed)) {
+      return true;
+    }
+    if (!puzzleMatchesReviewMode(puzzle, trainerStats, reviewMode)) {
+      return false;
+    }
     return true;
   });
 
@@ -269,7 +474,7 @@ export default function App() {
   const openings = uniqueSorted(puzzles.map((puzzle) => puzzle.opening));
   const openingCounts = countValues(puzzles.map((puzzle) => puzzle.opening));
   const sideToMoveCounts = countValues(puzzles.map((puzzle) => puzzle.side_to_move));
-  const activeFilterCount = Object.values(filters).filter(Boolean).length;
+  const activeFilterCount = Object.values(filters).filter(Boolean).length + (reviewMode === "all" ? 0 : 1);
 
   function updateCurrentPuzzleState(mutator) {
     if (!currentPuzzle) {
@@ -299,6 +504,12 @@ export default function App() {
       opening: "",
       sideToMove: "",
     });
+    setReviewMode("all");
+    setCursor(0);
+  }
+
+  function handleReviewModeChange(value) {
+    setReviewMode(value);
     setCursor(0);
   }
 
@@ -307,14 +518,7 @@ export default function App() {
       return;
     }
     setTrainerStats((currentStats) => {
-      const existing = currentStats[puzzleId] || {
-        attempted: 0,
-        solved: 0,
-        failed: 0,
-        revealed: 0,
-        firstSelectedMove: "",
-        lastPracticed: "",
-      };
+      const existing = normalizeTrainerStat(currentStats[puzzleId]);
       return {
         ...currentStats,
         [puzzleId]: mutator(existing),
@@ -342,37 +546,46 @@ export default function App() {
     const selectedMove = currentPuzzle && currentPuzzleState ? moveLookup(currentPuzzle)[currentPuzzleState.selectedMoveUci] : null;
     if (currentPuzzle && selectedMove && !currentPuzzleState.submittedMoveUci) {
       const solved = isSolvedMove(selectedMove);
-      recordTrainerResult(currentPuzzle.id, (existing) => ({
-        ...existing,
-        attempted: Number(existing.attempted || 0) + 1,
-        solved: Number(existing.solved || 0) + (solved ? 1 : 0),
-        failed: Number(existing.failed || 0) + (solved ? 0 : 1),
-        firstSelectedMove: existing.firstSelectedMove || selectedMove.uci,
-        lastPracticed: new Date().toISOString(),
-      }));
+      recordTrainerResult(currentPuzzle.id, (existing) => nextTrainerStat(existing, solved ? "solved" : "failed", selectedMove.uci));
     }
     updateCurrentPuzzleState((existing) => ({
       ...existing,
       submittedMoveUci: existing.selectedMoveUci,
+      playbackLineType: "submitted",
+      playbackPly: 1,
     }));
   }
 
   function handleReveal() {
     if (currentPuzzle && currentPuzzleState && !currentPuzzleState.revealed) {
-      recordTrainerResult(currentPuzzle.id, (existing) => ({
-        ...existing,
-        revealed: Number(existing.revealed || 0) + 1,
-        lastPracticed: new Date().toISOString(),
-      }));
+      const outcome = currentPuzzleState.submittedMoveUci ? "viewed" : "revealed";
+      recordTrainerResult(currentPuzzle.id, (existing) => nextTrainerStat(existing, outcome));
     }
     updateCurrentPuzzleState((existing) => ({
       ...existing,
       revealed: true,
+      playbackLineType: existing.submittedMoveUci ? existing.playbackLineType || "submitted" : "best",
+      playbackPly: existing.playbackPly || 1,
     }));
   }
 
   function handleReset() {
     updateCurrentPuzzleState(() => buildPuzzleState(currentPuzzle));
+  }
+
+  function handleSetPlaybackLine(lineType) {
+    updateCurrentPuzzleState((existing) => ({
+      ...existing,
+      playbackLineType: lineType,
+      playbackPly: 1,
+    }));
+  }
+
+  function handleSetPlaybackPly(ply) {
+    updateCurrentPuzzleState((existing) => ({
+      ...existing,
+      playbackPly: Math.max(0, ply),
+    }));
   }
 
   return (
@@ -407,6 +620,13 @@ export default function App() {
             </div>
           </div>
         </section>
+
+        <ReviewPanel
+          puzzles={puzzles}
+          trainerStats={trainerStats}
+          reviewMode={reviewMode}
+          onReviewModeChange={handleReviewModeChange}
+        />
 
         <section className="sidebar-card">
           <div className="sidebar-section-header">
@@ -510,6 +730,9 @@ export default function App() {
             onSubmitMove={handleSubmitMove}
             onReveal={handleReveal}
             onReset={handleReset}
+            onSetPlaybackLine={handleSetPlaybackLine}
+            onSetPlaybackPly={handleSetPlaybackPly}
+            trainerStats={normalizeTrainerStat(trainerStats[currentPuzzle.id])}
             onPrevious={() => setCursor((value) => Math.max(0, value - 1))}
             onNext={() => setCursor((value) => Math.min(filteredPuzzles.length - 1, value + 1))}
           />
