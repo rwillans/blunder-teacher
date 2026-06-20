@@ -1,4 +1,4 @@
-import React, { useEffect, useState } from "react";
+import React, { useEffect, useRef, useState } from "react";
 
 import { PuzzleWorkspace } from "./components/PuzzleWorkspace";
 import {
@@ -8,10 +8,15 @@ import {
   buildLichessThemeUrl,
 } from "./lichessLinks";
 import {
+  classifySubmittedMove,
   normalizeTrainerStat,
   nextTrainerStat,
   practiceGapForStats,
   puzzleMatchesReviewMode,
+  isRelearningCardReady,
+  queueRelearningCard,
+  relearningEntryForPuzzle,
+  removeRelearningCard,
 } from "./srs";
 import {
   loadTrainerStats,
@@ -28,7 +33,7 @@ const REVIEW_MODES = [
   { id: "due", label: "Due" },
   { id: "again", label: "Again" },
   { id: "new", label: "New" },
-  { id: "mastered", label: "Mastered" },
+  { id: "established", label: "Established" },
 ];
 
 function buildPuzzleState(puzzle) {
@@ -81,13 +86,6 @@ function moveLookup(puzzle) {
   return Object.fromEntries(options.map((option) => [option.uci, option]));
 }
 
-function isSolvedMove(move) {
-  if (!move) {
-    return false;
-  }
-  return ["Excellent", "Good"].includes(move.grade) || Number(move.eval_loss_cp || 0) <= 50;
-}
-
 function nextTrainerSummary(existingSummary, outcome) {
   const existing = normalizeTrainerSummary(existingSummary);
   const nowIso = new Date().toISOString();
@@ -116,6 +114,15 @@ function nextTrainerSummary(existingSummary, outcome) {
       totalScore: existing.totalScore - 5,
       lastPracticed: nowIso,
       lastResult: "again",
+    };
+  }
+
+  if (outcome === "acceptable") {
+    return {
+      ...existing,
+      attempted: existing.attempted + 1,
+      lastPracticed: nowIso,
+      lastResult: "acceptable",
     };
   }
 
@@ -316,7 +323,10 @@ export default function App() {
   const [trainerSummary, setTrainerSummary] = useState(loadTrainerSummary);
   const [cursor, setCursor] = useState(0);
   const [pendingPuzzleId, setPendingPuzzleId] = useState("");
+  const [presentationCount, setPresentationCount] = useState(0);
+  const [relearningQueue, setRelearningQueue] = useState([]);
   const [reviewMode, setReviewMode] = useState("all");
+  const lastPresentedPuzzleIdRef = useRef("");
   const [filters, setFilters] = useState({
     theme: "",
     opening: "",
@@ -396,6 +406,7 @@ export default function App() {
   const reviewNow = new Date();
   const filteredPuzzles = puzzles.filter((puzzle) => {
     const tags = Array.isArray(puzzle.tags) ? puzzle.tags : [];
+    const puzzleState = puzzleStates[puzzle.id];
     if (filters.theme && !tags.includes(filters.theme)) {
       return false;
     }
@@ -405,11 +416,15 @@ export default function App() {
     if (filters.sideToMove && puzzle.side_to_move !== filters.sideToMove) {
       return false;
     }
-    const puzzleState = puzzleStates[puzzle.id];
+    const answeredCurrentCard = puzzleState?.submittedMoveUci || puzzleState?.revealed;
     if (reviewMode !== "all" && (puzzleState?.submittedMoveUci || puzzleState?.revealed)) {
       return true;
     }
     if (!puzzleMatchesReviewMode(puzzle, trainerStats, reviewMode, reviewNow)) {
+      return false;
+    }
+    const relearningEntry = relearningEntryForPuzzle(relearningQueue, puzzle.id);
+    if (relearningEntry && !answeredCurrentCard && !isRelearningCardReady(relearningEntry, presentationCount)) {
       return false;
     }
     return true;
@@ -435,6 +450,15 @@ export default function App() {
     setCursor(targetIndex >= 0 ? targetIndex : 0);
     setPendingPuzzleId("");
   }, [filteredPuzzles, pendingPuzzleId]);
+
+  useEffect(() => {
+    if (!currentPuzzle || lastPresentedPuzzleIdRef.current === currentPuzzle.id) {
+      return;
+    }
+
+    lastPresentedPuzzleIdRef.current = currentPuzzle.id;
+    setPresentationCount((count) => count + 1);
+  }, [currentPuzzle]);
 
   function updateCurrentPuzzleState(mutator) {
     if (!currentPuzzle) {
@@ -522,6 +546,23 @@ export default function App() {
     setTrainerSummary((currentSummary) => nextTrainerSummary(currentSummary, outcome));
   }
 
+  function queueCurrentPuzzleForRelearning() {
+    if (!currentPuzzle) {
+      return;
+    }
+    const remainingPresentations = Math.max(0, filteredPuzzles.length - safeCursor - 1);
+    setRelearningQueue((queue) => (
+      queueRelearningCard(queue, currentPuzzle.id, presentationCount, remainingPresentations)
+    ));
+  }
+
+  function removeCurrentPuzzleFromRelearning() {
+    if (!currentPuzzle) {
+      return;
+    }
+    setRelearningQueue((queue) => removeRelearningCard(queue, currentPuzzle.id));
+  }
+
   function handleMoveSelect(selection) {
     updateCurrentPuzzleState((existing) => ({
       ...existing,
@@ -542,9 +583,18 @@ export default function App() {
     const selectedMove = currentPuzzle && currentPuzzleState ? moveLookup(currentPuzzle)[currentPuzzleState.selectedMoveUci] : null;
     if (currentPuzzle && selectedMove && !currentPuzzleState.submittedMoveUci) {
       const now = new Date();
-      const solved = isSolvedMove(selectedMove);
-      recordTrainerResult(currentPuzzle.id, (existing) => nextTrainerStat(existing, solved ? "solved" : "failed", selectedMove.uci, now));
-      recordTrainerSummaryResult(solved ? "solved" : "failed");
+      const outcome = classifySubmittedMove(currentPuzzle, selectedMove);
+      const relearningEntry = relearningEntryForPuzzle(relearningQueue, currentPuzzle.id);
+      const relearning = outcome === "solved" && isRelearningCardReady(relearningEntry, presentationCount);
+      recordTrainerResult(currentPuzzle.id, (existing) => (
+        nextTrainerStat(existing, outcome, selectedMove.uci, now, { relearning })
+      ));
+      recordTrainerSummaryResult(outcome);
+      if (outcome === "failed") {
+        queueCurrentPuzzleForRelearning();
+      } else if (outcome === "solved" || outcome === "acceptable") {
+        removeCurrentPuzzleFromRelearning();
+      }
     }
     updateCurrentPuzzleState((existing) => ({
       ...existing,
@@ -560,6 +610,9 @@ export default function App() {
       const outcome = currentPuzzleState.submittedMoveUci ? "viewed" : "revealed";
       recordTrainerResult(currentPuzzle.id, (existing) => nextTrainerStat(existing, outcome, "", now));
       recordTrainerSummaryResult(outcome);
+      if (outcome === "revealed") {
+        queueCurrentPuzzleForRelearning();
+      }
     }
     updateCurrentPuzzleState((existing) => ({
       ...existing,
