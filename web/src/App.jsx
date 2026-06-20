@@ -7,12 +7,22 @@ import {
   buildLichessPracticeUrl,
   buildLichessThemeUrl,
 } from "./lichessLinks";
+import {
+  normalizeTrainerStat,
+  nextTrainerStat,
+  practiceGapForStats,
+  puzzleMatchesReviewMode,
+} from "./srs";
+import {
+  loadTrainerStats,
+  loadTrainerSummary,
+  normalizeTrainerSummary,
+  saveTrainerStats,
+  saveTrainerSummary,
+} from "./storage";
 
 const DEFAULT_PUZZLES_URL = import.meta.env.VITE_PUZZLES_URL || (import.meta.env.DEV ? "/api/puzzles" : "/puzzles.json");
 const DEFAULT_WEAKNESSES_URL = import.meta.env.VITE_WEAKNESSES_URL || (import.meta.env.DEV ? "/api/weaknesses" : "/weaknesses.json");
-const TRAINER_STATS_KEY = "blunder-teacher:trainer-stats:v1";
-const TRAINER_SUMMARY_KEY = "blunder-teacher:trainer-summary:v1";
-const SRS_INTERVAL_DAYS = [0, 1, 3, 7, 14, 30, 60];
 const REVIEW_MODES = [
   { id: "all", label: "All" },
   { id: "due", label: "Due" },
@@ -66,117 +76,6 @@ function countValues(values) {
   return counts;
 }
 
-function todayStart() {
-  const today = new Date();
-  today.setHours(0, 0, 0, 0);
-  return today;
-}
-
-function dueDateFromNow(days) {
-  const dueDate = todayStart();
-  dueDate.setDate(dueDate.getDate() + days);
-  return dueDate.toISOString();
-}
-
-function normalizeTrainerStat(stat = {}) {
-  const attempted = Number(stat.attempted || 0);
-  const solved = Number(stat.solved || 0);
-  const failed = Number(stat.failed || 0);
-  const revealed = Number(stat.revealed || 0);
-  const masteryLevel = Number(stat.masteryLevel || 0);
-  const currentStreak = Number(stat.currentStreak || 0);
-  const bestStreak = Number(stat.bestStreak || 0);
-  return {
-    attempted,
-    solved,
-    failed,
-    revealed,
-    firstSelectedMove: stat.firstSelectedMove || "",
-    lastPracticed: stat.lastPracticed || "",
-    lastResult: stat.lastResult || "",
-    nextDue: stat.nextDue || "",
-    masteryLevel,
-    currentStreak,
-    bestStreak,
-    score: Number(stat.score || solved * 10 + masteryLevel * 5 + currentStreak * 2 - failed * 5 - revealed * 3),
-  };
-}
-
-function normalizeTrainerStats(rawStats) {
-  return Object.fromEntries(Object.entries(rawStats || {}).map(([puzzleId, stat]) => [puzzleId, normalizeTrainerStat(stat)]));
-}
-
-function buildTrainerSummaryFromStats(stats = {}) {
-  const summary = {
-    attempted: 0,
-    solved: 0,
-    failed: 0,
-    revealed: 0,
-    currentStreak: 0,
-    bestStreak: 0,
-    totalScore: 0,
-    lastPracticed: "",
-    lastResult: "",
-  };
-
-  for (const stat of Object.values(normalizeTrainerStats(stats))) {
-    summary.attempted += stat.attempted;
-    summary.solved += stat.solved;
-    summary.failed += stat.failed;
-    summary.revealed += stat.revealed;
-    summary.bestStreak = Math.max(summary.bestStreak, stat.bestStreak);
-    summary.totalScore += stat.score;
-    if (stat.lastPracticed && (!summary.lastPracticed || stat.lastPracticed > summary.lastPracticed)) {
-      summary.lastPracticed = stat.lastPracticed;
-      summary.lastResult = stat.lastResult;
-    }
-  }
-
-  return summary;
-}
-
-function normalizeTrainerSummary(summary = {}) {
-  return {
-    attempted: Number(summary.attempted || 0),
-    solved: Number(summary.solved || 0),
-    failed: Number(summary.failed || 0),
-    revealed: Number(summary.revealed || 0),
-    currentStreak: Number(summary.currentStreak || 0),
-    bestStreak: Number(summary.bestStreak || 0),
-    totalScore: Number(summary.totalScore ?? summary.score ?? 0),
-    lastPracticed: summary.lastPracticed || "",
-    lastResult: summary.lastResult || "",
-  };
-}
-
-function loadTrainerStats() {
-  if (typeof window === "undefined") {
-    return {};
-  }
-  try {
-    const rawStats = window.localStorage.getItem(TRAINER_STATS_KEY);
-    return rawStats ? normalizeTrainerStats(JSON.parse(rawStats)) : {};
-  } catch {
-    return {};
-  }
-}
-
-function loadTrainerSummary() {
-  if (typeof window === "undefined") {
-    return normalizeTrainerSummary();
-  }
-  try {
-    const rawSummary = window.localStorage.getItem(TRAINER_SUMMARY_KEY);
-    if (rawSummary) {
-      return normalizeTrainerSummary(JSON.parse(rawSummary));
-    }
-    const rawStats = window.localStorage.getItem(TRAINER_STATS_KEY);
-    return rawStats ? buildTrainerSummaryFromStats(JSON.parse(rawStats)) : normalizeTrainerSummary();
-  } catch {
-    return normalizeTrainerSummary();
-  }
-}
-
 function moveLookup(puzzle) {
   const options = Array.isArray(puzzle.legal_move_options) ? puzzle.legal_move_options : [];
   return Object.fromEntries(options.map((option) => [option.uci, option]));
@@ -187,86 +86,6 @@ function isSolvedMove(move) {
     return false;
   }
   return ["Excellent", "Good"].includes(move.grade) || Number(move.eval_loss_cp || 0) <= 50;
-}
-
-function isDueStat(stat, now = new Date()) {
-  const normalized = normalizeTrainerStat(stat);
-  if (!normalized.attempted && !normalized.revealed) {
-    return true;
-  }
-  if (!normalized.nextDue) {
-    return true;
-  }
-  const dueTime = new Date(normalized.nextDue).getTime();
-  return Number.isNaN(dueTime) || dueTime <= now.getTime();
-}
-
-function practiceGapForStats(stat) {
-  const normalized = normalizeTrainerStat(stat);
-  return normalized.failed + normalized.revealed - normalized.solved;
-}
-
-function nextTrainerStat(existingStat, outcome, selectedMoveUci = "") {
-  const existing = normalizeTrainerStat(existingStat);
-  const nowIso = new Date().toISOString();
-
-  if (outcome === "solved") {
-    const wasDue = isDueStat(existing);
-    const masteryLevel = wasDue ? Math.min(6, existing.masteryLevel + 1) : existing.masteryLevel;
-    const currentStreak = existing.currentStreak + 1;
-    const intervalDays = SRS_INTERVAL_DAYS[masteryLevel] || 60;
-    const solved = existing.solved + 1;
-    const attempted = existing.attempted + 1;
-    return {
-      ...existing,
-      attempted,
-      solved,
-      firstSelectedMove: existing.firstSelectedMove || selectedMoveUci,
-      lastPracticed: nowIso,
-      lastResult: "solved",
-      nextDue: wasDue ? dueDateFromNow(intervalDays) : existing.nextDue,
-      masteryLevel,
-      currentStreak,
-      bestStreak: Math.max(existing.bestStreak, currentStreak),
-      score: solved * 10 + masteryLevel * 5 + currentStreak * 2 - existing.failed * 5 - existing.revealed * 3,
-    };
-  }
-
-  if (outcome === "failed") {
-    const failed = existing.failed + 1;
-    const attempted = existing.attempted + 1;
-    return {
-      ...existing,
-      attempted,
-      failed,
-      firstSelectedMove: existing.firstSelectedMove || selectedMoveUci,
-      lastPracticed: nowIso,
-      lastResult: "again",
-      nextDue: new Date().toISOString(),
-      masteryLevel: 0,
-      currentStreak: 0,
-      score: existing.solved * 10 - failed * 5 - existing.revealed * 3,
-    };
-  }
-
-  if (outcome === "revealed") {
-    const revealed = existing.revealed + 1;
-    return {
-      ...existing,
-      revealed,
-      lastPracticed: nowIso,
-      lastResult: "again",
-      nextDue: new Date().toISOString(),
-      masteryLevel: 0,
-      currentStreak: 0,
-      score: existing.solved * 10 - existing.failed * 5 - revealed * 3,
-    };
-  }
-
-  return {
-    ...existing,
-    lastPracticed: nowIso,
-  };
 }
 
 function nextTrainerSummary(existingSummary, outcome) {
@@ -317,28 +136,11 @@ function nextTrainerSummary(existingSummary, outcome) {
   };
 }
 
-function puzzleMatchesReviewMode(puzzle, trainerStats, reviewMode) {
-  const stats = normalizeTrainerStat(trainerStats[puzzle.id]);
-  if (reviewMode === "due") {
-    return isDueStat(stats);
-  }
-  if (reviewMode === "again") {
-    return stats.lastResult === "again" || practiceGapForStats(stats) > 0;
-  }
-  if (reviewMode === "new") {
-    return !stats.attempted && !stats.revealed;
-  }
-  if (reviewMode === "mastered") {
-    return stats.masteryLevel >= 3;
-  }
-  return true;
-}
-
-function reviewCounts(puzzles, trainerStats) {
+function reviewCounts(puzzles, trainerStats, now) {
   return Object.fromEntries(
     REVIEW_MODES.map((mode) => [
       mode.id,
-      puzzles.filter((puzzle) => puzzleMatchesReviewMode(puzzle, trainerStats, mode.id)).length,
+      puzzles.filter((puzzle) => puzzleMatchesReviewMode(puzzle, trainerStats, mode.id, now)).length,
     ]),
   );
 }
@@ -464,8 +266,8 @@ function WeaknessPanel({ weaknesses, trainerStats }) {
   );
 }
 
-function ReviewPanel({ puzzles, trainerStats, trainerSummary, reviewMode, onReviewModeChange }) {
-  const counts = reviewCounts(puzzles, trainerStats);
+function ReviewPanel({ puzzles, trainerStats, trainerSummary, reviewMode, reviewNow, onReviewModeChange }) {
+  const counts = reviewCounts(puzzles, trainerStats, reviewNow);
   const summary = normalizeTrainerSummary(trainerSummary);
 
   return (
@@ -584,19 +386,14 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.localStorage.setItem(TRAINER_STATS_KEY, JSON.stringify(trainerStats));
+    saveTrainerStats(trainerStats);
   }, [trainerStats]);
 
   useEffect(() => {
-    if (typeof window === "undefined") {
-      return;
-    }
-    window.localStorage.setItem(TRAINER_SUMMARY_KEY, JSON.stringify(trainerSummary));
+    saveTrainerSummary(trainerSummary);
   }, [trainerSummary]);
 
+  const reviewNow = new Date();
   const filteredPuzzles = puzzles.filter((puzzle) => {
     const tags = Array.isArray(puzzle.tags) ? puzzle.tags : [];
     if (filters.theme && !tags.includes(filters.theme)) {
@@ -612,7 +409,7 @@ export default function App() {
     if (reviewMode !== "all" && (puzzleState?.submittedMoveUci || puzzleState?.revealed)) {
       return true;
     }
-    if (!puzzleMatchesReviewMode(puzzle, trainerStats, reviewMode)) {
+    if (!puzzleMatchesReviewMode(puzzle, trainerStats, reviewMode, reviewNow)) {
       return false;
     }
     return true;
@@ -744,8 +541,9 @@ export default function App() {
   function handleSubmitMove() {
     const selectedMove = currentPuzzle && currentPuzzleState ? moveLookup(currentPuzzle)[currentPuzzleState.selectedMoveUci] : null;
     if (currentPuzzle && selectedMove && !currentPuzzleState.submittedMoveUci) {
+      const now = new Date();
       const solved = isSolvedMove(selectedMove);
-      recordTrainerResult(currentPuzzle.id, (existing) => nextTrainerStat(existing, solved ? "solved" : "failed", selectedMove.uci));
+      recordTrainerResult(currentPuzzle.id, (existing) => nextTrainerStat(existing, solved ? "solved" : "failed", selectedMove.uci, now));
       recordTrainerSummaryResult(solved ? "solved" : "failed");
     }
     updateCurrentPuzzleState((existing) => ({
@@ -758,8 +556,9 @@ export default function App() {
 
   function handleReveal() {
     if (currentPuzzle && currentPuzzleState && !currentPuzzleState.revealed) {
+      const now = new Date();
       const outcome = currentPuzzleState.submittedMoveUci ? "viewed" : "revealed";
-      recordTrainerResult(currentPuzzle.id, (existing) => nextTrainerStat(existing, outcome));
+      recordTrainerResult(currentPuzzle.id, (existing) => nextTrainerStat(existing, outcome, "", now));
       recordTrainerSummaryResult(outcome);
     }
     updateCurrentPuzzleState((existing) => ({
@@ -813,6 +612,7 @@ export default function App() {
             trainerStats={trainerStats}
             trainerSummary={trainerSummary}
             reviewMode={reviewMode}
+            reviewNow={reviewNow}
             onReviewModeChange={handleReviewModeChange}
           />
 
