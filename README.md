@@ -22,7 +22,7 @@ A local chess analysis pipeline for PGN files that extracts critical moments and
   - `puzzles.json`
   - `weaknesses.json`
 
-`puzzles.json` carries the full frontend-friendly puzzle payload, including Lichess links, best and played move details, explanation text, a primary theme, theme tags, and precomputed legal-move grading data for the trainer. `weaknesses.json` summarizes recurring themes, openings, phases, sides, and severity buckets so the frontend can surface personal drill priorities.
+The local `outputs/puzzles.json` carries the full analysis/debug payload, including game metadata, Lichess links, best and played move details, explanation text, a primary theme, theme tags, and precomputed legal-move grading data for the trainer. The local `outputs/weaknesses.json` summarizes recurring themes, openings, phases, sides, and severity buckets so the frontend can surface personal drill priorities.
 
 ## Requirements
 - Python 3.10+
@@ -88,7 +88,20 @@ python main.py --output /path/to/output
 
 ## React App
 
-The repo includes a React/Vite frontend in [web/README.md](/D:/positron_projects/blunder-teacher/web/README.md). Each pipeline run writes `puzzles.json` to your chosen output folder and also syncs a copy into `web/public/puzzles.json` for static builds. During local Vite development, the app reads directly from `outputs/puzzles.json` through `/api/puzzles`, so you are not depending on a stale copied file.
+The repo includes a React/Vite frontend in [web/README.md](/D:/positron_projects/blunder-teacher/web/README.md). Each pipeline run writes full local files to your chosen output folder and also writes privacy-reduced static files into `web/public/puzzles.json` and `web/public/weaknesses.json`. The public web files omit player names, event/site/date/result metadata, source filenames, game indexes, and original source paths. During local Vite development, the app reads directly from `outputs/puzzles.json` through `/api/puzzles`, so you are not depending on a stale copied file.
+
+## Public Deployment Privacy
+
+The GitHub Pages-ready payload in `web/public` is deliberately smaller than the local `outputs` payload, but it is still public data. Puzzle positions, moves, engine lines, themes, openings, and explanations remain accessible to anyone who can load the deployed site.
+
+The app includes `noindex`/`nofollow` metadata and `web/public/robots.txt` with `Disallow: /` to discourage indexing. These are not access controls and do not make a GitHub Pages deployment private. Before deploying, inspect the generated `web/public/*.json` files yourself and run:
+
+```bash
+cd web
+npm run privacy:check
+```
+
+This check scans the public payload and built `dist` output for known private field names and absolute local paths.
 
 ## Notes
 - Directory scan is top-level `*.pgn` only (non-recursive).
@@ -98,7 +111,7 @@ The repo includes a React/Vite frontend in [web/README.md](/D:/positron_projects
 - Puzzle prompt types are instructional labels, while `tags` are the Lichess-style study themes used by the trainer filter.
 - `--theme-pv-plies` makes theme tagging look further into the best and played lines; `--engine-depth` is still the setting that controls engine search strength.
 - The React trainer also reads `weaknesses.json` when present and tracks local solve/fail/reveal history in browser storage.
-- Browser-local scoring and spaced repetition add `Due`, `Again`, `New`, and `Mastered` review queues without changing the JSON export format.
+- Browser-local scoring and spaced repetition add `Due`, `Again`, `New`, `Learning`, `Familiar`, and `Established` review queues without changing the JSON export format.
 - After checking or revealing a move, the board can step through the relevant engine line from `legal_move_options[].pv_uci`.
 - `--player-mistakes-only` has effect only when `--player` is provided.
 - Precomputing every legal move for each critical position increases analysis cost roughly in proportion to the number of legal moves in those positions, but it keeps the viewer deterministic and offline-friendly.

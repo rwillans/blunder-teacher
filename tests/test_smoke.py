@@ -24,10 +24,14 @@ from chess_analysis.puzzles import assign_prompt_type, assign_puzzle_theme, assi
 from chess_analysis.puzzles import _build_prompt_hint
 from chess_analysis.puzzles import _build_explanation
 from chess_analysis.reporting import (
+    PRIVATE_FIELD_NAMES,
+    build_public_puzzle_payload,
+    build_public_weakness_payload,
     build_puzzle_payload,
     write_puzzles_json,
     write_weaknesses_json,
     write_web_public_puzzles_json,
+    write_web_public_weaknesses_json,
 )
 from chess_analysis.weaknesses import build_weakness_payload
 from main import main
@@ -792,6 +796,81 @@ def test_build_puzzle_payload_matches_json_shape() -> None:
     assert payload[0]["legal_move_options"]
 
 
+def _json_keys(value: object) -> set[str]:
+    if isinstance(value, list):
+        return set().union(*(_json_keys(item) for item in value)) if value else set()
+    if isinstance(value, dict):
+        return set(value).union(*(_json_keys(item) for item in value.values()))
+    return set()
+
+
+def test_public_puzzle_payload_removes_game_identifying_metadata() -> None:
+    critical = _critical(
+        150.0,
+        0.0,
+        False,
+        white="PrivatePersonOne",
+        black="PrivatePersonTwo",
+        side_to_move="White",
+    )
+    critical.event = "PrivateTournament"
+    critical.site = "PrivateVenue"
+    critical.date = "2099.12.31"
+    critical.result = "PrivateResult"
+    critical.source_file = r"C:\Users\name\games\private-game.pgn"
+    critical.game_index = 99
+    puzzle = build_puzzles([critical])[0]
+
+    full_payload = build_puzzle_payload([puzzle])
+    public_payload = build_public_puzzle_payload([puzzle])
+    public_text = json.dumps(public_payload)
+
+    assert PRIVATE_FIELD_NAMES.issubset(full_payload[0])
+    assert not (PRIVATE_FIELD_NAMES & _json_keys(public_payload))
+    for private_value in [
+        "PrivatePersonOne",
+        "PrivatePersonTwo",
+        "PrivateTournament",
+        "PrivateVenue",
+        "2099.12.31",
+        "PrivateResult",
+        "private-game.pgn",
+        r"C:\Users\name",
+    ]:
+        assert private_value not in public_text
+    assert public_payload[0]["id"] == puzzle.puzzle_id
+    assert public_payload[0]["fen"] == puzzle.fen
+    assert public_payload[0]["legal_move_options"]
+
+
+def test_public_weakness_payload_keeps_group_data_without_examples_or_private_fields() -> None:
+    critical = _critical(150.0, -50.0, False, white="PrivatePersonOne", black="PrivatePersonTwo")
+    critical.event = "PrivateTournament"
+    critical.site = "PrivateVenue"
+    critical.date = "2099.12.31"
+    critical.source_file = "/Users/name/private-game.pgn"
+    puzzle = build_puzzles([critical])[0]
+
+    public_payload = build_public_weakness_payload([puzzle])
+    public_text = json.dumps(public_payload)
+
+    assert public_payload
+    assert not (PRIVATE_FIELD_NAMES & _json_keys(public_payload))
+    assert "examples" not in _json_keys(public_payload)
+    assert "latest_seen" not in _json_keys(public_payload)
+    assert puzzle.puzzle_id in public_payload[0]["puzzle_ids"]
+    for private_value in [
+        "PrivatePersonOne",
+        "PrivatePersonTwo",
+        "PrivateTournament",
+        "PrivateVenue",
+        "2099.12.31",
+        "private-game.pgn",
+        "/Users/name",
+    ]:
+        assert private_value not in public_text
+
+
 def test_write_web_public_puzzles_json_syncs_payload_when_web_dir_exists(tmp_path: Path) -> None:
     puzzles = build_puzzles(
         [
@@ -805,6 +884,24 @@ def test_write_web_public_puzzles_json_syncs_payload_when_web_dir_exists(tmp_pat
     assert json_path == tmp_path / "web" / "public" / "puzzles.json"
     payload = json.loads(json_path.read_text(encoding="utf-8"))
     assert payload[0]["id"] == puzzles[0].puzzle_id
+    assert not (PRIVATE_FIELD_NAMES & _json_keys(payload))
+
+
+def test_write_web_public_weaknesses_json_syncs_reduced_payload_when_web_dir_exists(tmp_path: Path) -> None:
+    puzzles = build_puzzles(
+        [
+            _critical(150.0, 0.0, False, white="Rob Willans", black="Other", side_to_move="White"),
+        ]
+    )
+    (tmp_path / "web").mkdir()
+
+    json_path = write_web_public_weaknesses_json(tmp_path, puzzles)
+
+    assert json_path == tmp_path / "web" / "public" / "weaknesses.json"
+    payload = json.loads(json_path.read_text(encoding="utf-8"))
+    assert payload
+    assert not (PRIVATE_FIELD_NAMES & _json_keys(payload))
+    assert "examples" not in _json_keys(payload)
 
 
 def test_build_explanation_for_find_best_move_mentions_status_rank_and_pv() -> None:

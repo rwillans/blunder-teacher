@@ -261,7 +261,7 @@ function WeaknessPanel({ weaknesses, trainerStats }) {
               {drillLinks.length ? (
                 <div className="weakness-links">
                   {drillLinks.map((link) => (
-                    <a key={link.label} href={link.url} target="_blank" rel="noreferrer" className="analysis-link">
+                    <a key={link.label} href={link.url} target="_blank" rel="noreferrer noopener" className="analysis-link">
                       {link.label}
                     </a>
                   ))}

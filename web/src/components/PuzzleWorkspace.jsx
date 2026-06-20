@@ -151,12 +151,12 @@ function LichessLinkStack({
       {hasPrimaryLinks ? (
         <div className="lichess-link-group">
           {analysisUrl ? (
-            <a href={analysisUrl} target="_blank" rel="noreferrer" className="analysis-link">
+            <a href={analysisUrl} target="_blank" rel="noreferrer noopener" className="analysis-link">
               Open position in Lichess
             </a>
           ) : null}
           {openingUrl ? (
-            <a href={openingUrl} target="_blank" rel="noreferrer" className="analysis-link">
+            <a href={openingUrl} target="_blank" rel="noreferrer noopener" className="analysis-link">
               Explore {opening} on Lichess
             </a>
           ) : null}
@@ -165,17 +165,17 @@ function LichessLinkStack({
       {hasThematicLinks ? (
         <div className="lichess-link-group thematic-link-group">
           {openingTrainingUrl ? (
-            <a href={openingTrainingUrl} target="_blank" rel="noreferrer" className="analysis-link">
+            <a href={openingTrainingUrl} target="_blank" rel="noreferrer noopener" className="analysis-link">
               Open {opening} puzzles on Lichess
             </a>
           ) : null}
           {themeLinks.map((link) => (
-            <a key={link.label} href={link.url} target="_blank" rel="noreferrer" className="analysis-link">
+            <a key={link.label} href={link.url} target="_blank" rel="noreferrer noopener" className="analysis-link">
               Open {link.label.toLowerCase()} puzzles on Lichess
             </a>
           ))}
           {practiceLinks.map((link) => (
-            <a key={`${link.label}-practice`} href={link.url} target="_blank" rel="noreferrer" className="analysis-link">
+            <a key={`${link.label}-practice`} href={link.url} target="_blank" rel="noreferrer noopener" className="analysis-link">
               Study {link.label.toLowerCase()} in Lichess Practice
             </a>
           ))}
@@ -301,10 +301,6 @@ export function PuzzleWorkspace({
             <h3>{puzzle.prompt}</h3>
             {puzzle.prompt_hint ? <p className="prompt-hint">{puzzle.prompt_hint}</p> : null}
             <p>{puzzle.opening || "Opening not recorded"}</p>
-            <p className="hero-meta">
-              {puzzle.white || "White"} vs {puzzle.black || "Black"} · {puzzle.event || "Unknown event"} ·{" "}
-              {puzzle.date || "Unknown date"}
-            </p>
           </div>
 
           <div className="toolbar">
@@ -500,13 +496,7 @@ export function PuzzleWorkspace({
                 <dd>{puzzle.side_to_move}</dd>
               </div>
               <div>
-                <dt>Source</dt>
-                <dd>
-                  {puzzle.source_file} (game {puzzle.game_index})
-                </dd>
-              </div>
-              <div>
-                <dt>Played in game</dt>
+                <dt>Played move</dt>
                 <dd>{playedMove}</dd>
               </div>
               {tags.length ? (
