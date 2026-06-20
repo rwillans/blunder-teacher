@@ -230,6 +230,12 @@ export function puzzleMatchesReviewMode(puzzle, trainerStats, reviewMode, now) {
   if (reviewMode === "new") {
     return !stats.attempted && !stats.revealed;
   }
+  if (reviewMode === "learning") {
+    return stats.masteryLevel <= 2;
+  }
+  if (reviewMode === "familiar") {
+    return stats.masteryLevel >= 3 && stats.masteryLevel <= 4;
+  }
   if (reviewMode === "established" || reviewMode === "mastered") {
     return stats.masteryLevel >= 5;
   }

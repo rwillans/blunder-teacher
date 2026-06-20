@@ -302,7 +302,7 @@ describe("review modes and status labels", () => {
     expect([5, 6].map(masteryStatusForLevel)).toEqual(["Established", "Established"]);
   });
 
-  it("retains due, again, new, and established review behavior", () => {
+  it("retains due, again, new, learning, familiar, and established review behavior", () => {
     const cards = {
       unseen: puzzle("unseen"),
       due: puzzle("due"),
@@ -310,6 +310,7 @@ describe("review modes and status labels", () => {
       failed: puzzle("failed"),
       gap: puzzle("gap"),
       newRevealed: puzzle("newRevealed"),
+      learning: puzzle("learning"),
       familiar: puzzle("familiar"),
       established: puzzle("established"),
     };
@@ -319,6 +320,7 @@ describe("review modes and status labels", () => {
       failed: { attempted: 1, failed: 1, lastResult: "again", nextDue: localStartIso(2) },
       gap: { attempted: 3, solved: 1, failed: 2, nextDue: localStartIso(2) },
       newRevealed: { revealed: 1 },
+      learning: { attempted: 2, solved: 2, masteryLevel: 2, nextDue: localStartIso(2) },
       familiar: { attempted: 3, solved: 3, masteryLevel: 4, nextDue: localStartIso(2) },
       established: { attempted: 5, solved: 5, masteryLevel: 5, nextDue: localStartIso(2) },
     };
@@ -334,6 +336,11 @@ describe("review modes and status labels", () => {
     expect(puzzleMatchesReviewMode(cards.unseen, stats, "new", NOW)).toBe(true);
     expect(puzzleMatchesReviewMode(cards.newRevealed, stats, "new", NOW)).toBe(false);
     expect(puzzleMatchesReviewMode(cards.due, stats, "new", NOW)).toBe(false);
+
+    expect(puzzleMatchesReviewMode(cards.learning, stats, "learning", NOW)).toBe(true);
+    expect(puzzleMatchesReviewMode(cards.familiar, stats, "learning", NOW)).toBe(false);
+    expect(puzzleMatchesReviewMode(cards.familiar, stats, "familiar", NOW)).toBe(true);
+    expect(puzzleMatchesReviewMode(cards.established, stats, "familiar", NOW)).toBe(false);
 
     expect(puzzleMatchesReviewMode(cards.familiar, stats, "established", NOW)).toBe(false);
     expect(puzzleMatchesReviewMode(cards.established, stats, "established", NOW)).toBe(true);

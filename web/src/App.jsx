@@ -33,6 +33,8 @@ const REVIEW_MODES = [
   { id: "due", label: "Due" },
   { id: "again", label: "Again" },
   { id: "new", label: "New" },
+  { id: "learning", label: "Learning" },
+  { id: "familiar", label: "Familiar" },
   { id: "established", label: "Established" },
 ];
 
