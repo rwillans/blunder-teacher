@@ -1,6 +1,7 @@
 import React, { useEffect } from "react";
 
 import { buildLinePositions } from "../chessPlayback";
+import { classifySubmittedMove, masteryStatusForLevel } from "../srs";
 import { BoardShell } from "./BoardShell";
 import {
   buildLichessAnalysisUrl,
@@ -29,13 +30,6 @@ function lineMoves(option) {
   }
   const pv = Array.isArray(option.pv_uci) ? option.pv_uci.filter(Boolean) : [];
   return pv.length ? pv : [option.uci].filter(Boolean);
-}
-
-function isSolvedMove(move) {
-  if (!move) {
-    return false;
-  }
-  return ["Excellent", "Good"].includes(move.grade) || Number(move.eval_loss_cp || 0) <= 50;
 }
 
 function buildOptionLinePositions(puzzle, option) {
@@ -238,7 +232,8 @@ export function PuzzleWorkspace({
   const studyAnalysisUrl = submittedMove ? submittedAnalysisUrl : revealedAnalysisUrl;
   const showCoachResult = Boolean(submittedMove || puzzleState.revealed);
   const engineLineLabel = activeLineType === "best" ? "Best engine line" : "Your move line";
-  const submittedMoveSolved = isSolvedMove(submittedMove);
+  const submittedOutcome = submittedMove ? classifySubmittedMove(puzzle, submittedMove) : "";
+  const submittedMoveSolved = submittedOutcome === "solved";
   const hasStudyLinks = Boolean(
     showCoachResult
       && (studyAnalysisUrl
@@ -366,8 +361,8 @@ export function PuzzleWorkspace({
             <>
               <div className="result-strip">
                 <div>
-                  <span className="stat-label">Grade</span>
-                  <strong>{submittedMove.grade}</strong>
+                  <span className="stat-label">Outcome</span>
+                  <strong>{submittedOutcome || submittedMove.grade}</strong>
                 </div>
                 <div>
                   <span className="stat-label">Your move</span>
@@ -470,6 +465,10 @@ export function PuzzleWorkspace({
               <dd>
                 {trainerSummary.currentStreak || 0} / {trainerSummary.bestStreak || 0}
               </dd>
+            </div>
+            <div>
+              <dt>Status</dt>
+              <dd>{masteryStatusForLevel(trainerStats.masteryLevel)}</dd>
             </div>
             <div>
               <dt>This puzzle</dt>
