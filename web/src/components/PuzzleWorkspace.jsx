@@ -31,6 +31,13 @@ function lineMoves(option) {
   return pv.length ? pv : [option.uci].filter(Boolean);
 }
 
+function isSolvedMove(move) {
+  if (!move) {
+    return false;
+  }
+  return ["Excellent", "Good"].includes(move.grade) || Number(move.eval_loss_cp || 0) <= 50;
+}
+
 function buildOptionLinePositions(puzzle, option) {
   const moves = lineMoves(option);
   const positions = buildLinePositions(puzzle.fen, moves);
@@ -198,6 +205,7 @@ export function PuzzleWorkspace({
   onSetPlaybackPly,
   onPrevious,
   onNext,
+  onSolvedPlaybackComplete,
   trainerStats,
   trainerSummary = {},
 }) {
@@ -230,6 +238,7 @@ export function PuzzleWorkspace({
   const studyAnalysisUrl = submittedMove ? submittedAnalysisUrl : revealedAnalysisUrl;
   const showCoachResult = Boolean(submittedMove || puzzleState.revealed);
   const engineLineLabel = activeLineType === "best" ? "Best engine line" : "Your move line";
+  const submittedMoveSolved = isSolvedMove(submittedMove);
   const hasStudyLinks = Boolean(
     showCoachResult
       && (studyAnalysisUrl
@@ -260,6 +269,32 @@ export function PuzzleWorkspace({
     puzzleState.revealed,
     submittedMove,
     onSetPlaybackPly,
+  ]);
+
+  useEffect(() => {
+    if (
+      !canGoForward
+      || !submittedMoveSolved
+      || activeLineType !== "submitted"
+      || playbackMaxPly < 1
+      || playbackPly < playbackMaxPly
+    ) {
+      return undefined;
+    }
+
+    const timer = window.setTimeout(() => {
+      onSolvedPlaybackComplete();
+    }, 2500);
+
+    return () => window.clearTimeout(timer);
+  }, [
+    activeLineType,
+    canGoForward,
+    onSolvedPlaybackComplete,
+    playbackMaxPly,
+    playbackPly,
+    puzzle.id,
+    submittedMoveSolved,
   ]);
 
   return (

@@ -513,6 +513,7 @@ export default function App() {
   const [trainerStats, setTrainerStats] = useState(loadTrainerStats);
   const [trainerSummary, setTrainerSummary] = useState(loadTrainerSummary);
   const [cursor, setCursor] = useState(0);
+  const [pendingPuzzleId, setPendingPuzzleId] = useState("");
   const [reviewMode, setReviewMode] = useState("all");
   const [filters, setFilters] = useState({
     theme: "",
@@ -628,6 +629,16 @@ export default function App() {
   const activeFilterCount = Object.values(filters).filter(Boolean).length + (reviewMode === "all" ? 0 : 1);
   const hasWeaknesses = weaknesses.length > 0;
 
+  useEffect(() => {
+    if (!pendingPuzzleId) {
+      return;
+    }
+
+    const targetIndex = filteredPuzzles.findIndex((puzzle) => puzzle.id === pendingPuzzleId);
+    setCursor(targetIndex >= 0 ? targetIndex : 0);
+    setPendingPuzzleId("");
+  }, [filteredPuzzles, pendingPuzzleId]);
+
   function updateCurrentPuzzleState(mutator) {
     if (!currentPuzzle) {
       return;
@@ -642,7 +653,37 @@ export default function App() {
     });
   }
 
+  function resetPuzzleState(puzzle) {
+    if (!puzzle) {
+      return;
+    }
+
+    setPuzzleStates((currentState) => ({
+      ...currentState,
+      [puzzle.id]: buildPuzzleState(puzzle),
+    }));
+  }
+
+  function moveToPuzzle(targetPuzzle) {
+    resetPuzzleState(currentPuzzle);
+    if (!targetPuzzle) {
+      setCursor(0);
+      return;
+    }
+
+    setPendingPuzzleId(targetPuzzle.id);
+  }
+
+  function handlePreviousPuzzle() {
+    moveToPuzzle(filteredPuzzles[Math.max(0, safeCursor - 1)] || null);
+  }
+
+  function handleNextPuzzle() {
+    moveToPuzzle(filteredPuzzles[Math.min(filteredPuzzles.length - 1, safeCursor + 1)] || null);
+  }
+
   function handleFilterChange(key, value) {
+    resetPuzzleState(currentPuzzle);
     setFilters((currentFilters) => ({
       ...currentFilters,
       [key]: value,
@@ -651,6 +692,7 @@ export default function App() {
   }
 
   function clearFilters() {
+    resetPuzzleState(currentPuzzle);
     setFilters({
       theme: "",
       opening: "",
@@ -661,6 +703,7 @@ export default function App() {
   }
 
   function handleReviewModeChange(value) {
+    resetPuzzleState(currentPuzzle);
     setReviewMode(value);
     setCursor(0);
   }
@@ -870,8 +913,9 @@ export default function App() {
             onSetPlaybackPly={handleSetPlaybackPly}
             trainerStats={normalizeTrainerStat(trainerStats[currentPuzzle.id])}
             trainerSummary={normalizeTrainerSummary(trainerSummary)}
-            onPrevious={() => setCursor((value) => Math.max(0, value - 1))}
-            onNext={() => setCursor((value) => Math.min(filteredPuzzles.length - 1, value + 1))}
+            onPrevious={handlePreviousPuzzle}
+            onNext={handleNextPuzzle}
+            onSolvedPlaybackComplete={handleNextPuzzle}
           />
         ) : null}
       </main>
