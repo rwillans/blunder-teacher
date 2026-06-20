@@ -69,6 +69,7 @@ class CriticalPosition:
     eval_loss_display: str = ""
     best_pv_san: str = ""
     legal_move_options: list[LegalMoveOption] = field(default_factory=list)
+    game_id: str = ""
 
 
 def _score_to_cp(score: chess.engine.PovScore, turn: chess.Color) -> int:
@@ -417,6 +418,7 @@ def extract_critical_positions(
                             CriticalPosition(
                                 source_file=metadata.source_file,
                                 game_index=metadata.game_index,
+                                game_id=metadata.game_id,
                                 event=metadata.event,
                                 site=metadata.site,
                                 date=metadata.date,

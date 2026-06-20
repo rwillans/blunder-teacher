@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import logging
+import hashlib
+import json
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Iterable, List
@@ -14,6 +16,7 @@ from .openings import resolve_opening_fields
 class GameRecord:
     source_file: str
     game_index: int
+    game_id: str
     event: str
     site: str
     date: str
@@ -32,6 +35,25 @@ class ParsedGame:
 
 def _header(headers: chess.pgn.Headers, key: str) -> str:
     return (headers.get(key) or "").strip()
+
+
+def _normalize_identity_value(value: str) -> str:
+    return " ".join((value or "").strip().casefold().split())
+
+
+def _stable_game_id(game: chess.pgn.Game) -> str:
+    identity = {
+        "event": _normalize_identity_value(_header(game.headers, "Event")),
+        "site": _normalize_identity_value(_header(game.headers, "Site")),
+        "date": _normalize_identity_value(_header(game.headers, "Date")),
+        "round": _normalize_identity_value(_header(game.headers, "Round")),
+        "white": _normalize_identity_value(_header(game.headers, "White")),
+        "black": _normalize_identity_value(_header(game.headers, "Black")),
+        "result": _normalize_identity_value(_header(game.headers, "Result")),
+        "moves": [move.uci() for move in game.mainline_moves()],
+    }
+    encoded = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return hashlib.sha256(encoded).hexdigest()[:16]
 
 
 def parse_pgn_files(pgn_files: Iterable[Path], player: str | None = None) -> List[ParsedGame]:
@@ -71,6 +93,7 @@ def parse_pgn_files(pgn_files: Iterable[Path], player: str | None = None) -> Lis
                             metadata=GameRecord(
                                 source_file=str(pgn_file),
                                 game_index=game_index,
+                                game_id=_stable_game_id(game),
                                 event=_header(headers, "Event"),
                                 site=_header(headers, "Site"),
                                 date=_header(headers, "Date"),

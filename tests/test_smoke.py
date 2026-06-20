@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import json
 import sys
+from dataclasses import replace
 from pathlib import Path
 from types import SimpleNamespace
 
@@ -18,6 +19,7 @@ from chess_analysis.critical_analysis import (
     extract_critical_positions,
 )
 from chess_analysis.pipeline import _filter_player_mistakes_only, run_pipeline
+from chess_analysis.pgn_parser import parse_pgn_files
 from chess_analysis.puzzles import assign_prompt_type, assign_puzzle_theme, assign_puzzle_themes, build_puzzles
 from chess_analysis.puzzles import _build_prompt_hint
 from chess_analysis.puzzles import _build_explanation
@@ -616,6 +618,100 @@ def test_write_puzzles_json_exports_frontend_friendly_payload(tmp_path: Path) ->
     assert payload[0]["tags"]
     assert "legal_move_options" in payload[0]
     assert "pv_uci" in payload[0]["legal_move_options"][0]
+
+
+def test_puzzle_ids_are_stable_across_repeated_builds() -> None:
+    critical = _critical(150.0, 0.0, False)
+    critical.game_id = "stable-game"
+
+    first = build_puzzles([critical])[0]
+    second = build_puzzles([critical])[0]
+
+    assert first.puzzle_id == second.puzzle_id
+    assert first.puzzle_id.startswith("puzzle_")
+    assert first.puzzle_id != "puzzle_00001"
+
+
+def test_puzzle_ids_do_not_depend_on_input_order_or_earlier_puzzles() -> None:
+    earlier = _critical(300.0, 0.0, False, white="Earlier", black="Player")
+    earlier.game_id = "earlier-game"
+    first = _critical(150.0, 0.0, False, white="A", black="B")
+    first.game_id = "first-game"
+    second = _critical(220.0, -100.0, False, white="C", black="D")
+    second.game_id = "second-game"
+
+    original_ids = {p.white: p.puzzle_id for p in build_puzzles([first, second])}
+    reordered_ids = {p.white: p.puzzle_id for p in build_puzzles([second, first])}
+    with_earlier_ids = {p.white: p.puzzle_id for p in build_puzzles([earlier, first, second])}
+
+    assert reordered_ids["A"] == original_ids["A"]
+    assert reordered_ids["C"] == original_ids["C"]
+    assert with_earlier_ids["A"] == original_ids["A"]
+    assert with_earlier_ids["C"] == original_ids["C"]
+
+
+def test_puzzle_ids_distinguish_different_games_with_same_fen() -> None:
+    left = _critical(150.0, 0.0, False, white="A", black="B")
+    left.game_id = "left-game"
+    right = _critical(150.0, 0.0, False, white="A", black="B")
+    right.game_id = "right-game"
+
+    left_puzzle, right_puzzle = build_puzzles([left, right])
+
+    assert left_puzzle.fen == right_puzzle.fen
+    assert left_puzzle.puzzle_id != right_puzzle.puzzle_id
+
+
+def test_puzzle_ids_ignore_engine_evaluation_and_annotation_fields() -> None:
+    critical = _critical(150.0, 0.0, False)
+    critical.game_id = "stable-game"
+    changed_analysis = replace(
+        critical,
+        eval_before=900.0,
+        eval_after=-300.0,
+        eval_swing=1200.0,
+        best_eval_display="+9.00",
+        played_eval_display="-3.00",
+        eval_loss_display="1200 cp",
+        best_pv_san="Nf3 Nc6 d4",
+        opening="Different opening label",
+    )
+
+    assert build_puzzles([critical])[0].puzzle_id == build_puzzles([changed_analysis])[0].puzzle_id
+
+
+def test_stable_game_identity_does_not_shift_when_earlier_game_is_added(tmp_path: Path) -> None:
+    target_game = """[Event "Target"]
+[Site "Internet"]
+[Date "2024.03.01"]
+[Round "1"]
+[White "Alice"]
+[Black "Bob"]
+[Result "1-0"]
+
+1. e4 e5 2. Nf3 Nc6 1-0
+"""
+    earlier_game = """[Event "Earlier"]
+[Site "Internet"]
+[Date "2024.02.01"]
+[Round "1"]
+[White "Carol"]
+[Black "Dave"]
+[Result "0-1"]
+
+1. d4 d5 0-1
+
+"""
+    original_path = tmp_path / "original.pgn"
+    shifted_path = tmp_path / "shifted.pgn"
+    original_path.write_text(target_game, encoding="utf-8")
+    shifted_path.write_text(earlier_game + target_game, encoding="utf-8")
+
+    original_target = parse_pgn_files([original_path])[0].metadata
+    shifted_target = next(record.metadata for record in parse_pgn_files([shifted_path]) if record.metadata.event == "Target")
+
+    assert original_target.game_id == shifted_target.game_id
+    assert original_target.game_index != shifted_target.game_index
 
 
 def test_pv_uci_exports_replayable_best_line() -> None:

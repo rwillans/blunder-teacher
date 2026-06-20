@@ -1,5 +1,7 @@
 from __future__ import annotations
 
+import hashlib
+import json
 import chess
 from dataclasses import dataclass, field
 from typing import Iterable, List
@@ -105,6 +107,54 @@ class ReplayedMove:
     board_after: chess.Board
     mover_color: bool
     ply_index: int
+
+
+def _normalize_identity_value(value: object) -> str:
+    return " ".join(str(value or "").strip().casefold().split())
+
+
+def _normalized_game_identity(critical: CriticalPosition) -> dict[str, object]:
+    if critical.game_id:
+        return {"game_id": _normalize_identity_value(critical.game_id)}
+    return {
+        "event": _normalize_identity_value(critical.event),
+        "site": _normalize_identity_value(critical.site),
+        "date": _normalize_identity_value(critical.date),
+        "white": _normalize_identity_value(critical.white),
+        "black": _normalize_identity_value(critical.black),
+        "result": _normalize_identity_value(critical.result),
+        "source_file": _normalize_identity_value(critical.source_file),
+        "game_index": int(critical.game_index or 0),
+    }
+
+
+def _ply_location(critical: CriticalPosition) -> dict[str, object]:
+    try:
+        board = chess.Board(critical.fen)
+        fullmove_number = board.fullmove_number
+        active_color = "white" if board.turn == chess.WHITE else "black"
+        ply_index = max(0, (fullmove_number - 1) * 2 + (0 if board.turn == chess.WHITE else 1))
+    except ValueError:
+        fullmove_number = int(critical.move_number or 0)
+        active_color = _normalize_identity_value(critical.side_to_move)
+        ply_index = max(0, (fullmove_number - 1) * 2 + (0 if active_color == "white" else 1))
+
+    return {
+        "fullmove_number": fullmove_number,
+        "active_color": active_color,
+        "ply_index": ply_index,
+        "played_move_uci": _normalize_identity_value(critical.played_move_uci),
+    }
+
+
+def stable_puzzle_id(critical: CriticalPosition) -> str:
+    identity = {
+        "game": _normalized_game_identity(critical),
+        "fen": " ".join(critical.fen.strip().split()),
+        "location": _ply_location(critical),
+    }
+    encoded = json.dumps(identity, sort_keys=True, separators=(",", ":")).encode("utf-8")
+    return f"puzzle_{hashlib.sha256(encoded).hexdigest()[:12]}"
 
 
 def _eval_for_side(eval_cp: float, side_to_move: str) -> float:
@@ -965,13 +1015,13 @@ def _build_explanation(critical: CriticalPosition, prompt_type: str) -> str:
 
 def build_puzzles(critical_positions: Iterable[CriticalPosition]) -> List[PuzzleRecord]:
     puzzles: List[PuzzleRecord] = []
-    for idx, critical in enumerate(critical_positions, start=1):
+    for critical in critical_positions:
         tags = assign_puzzle_themes(critical)
         prompt_type = _prompt_type_for_themes(critical, tags)
         side_to_move = critical.side_to_move
         puzzles.append(
             PuzzleRecord(
-                puzzle_id=f"puzzle_{idx:05d}",
+                puzzle_id=stable_puzzle_id(critical),
                 fen=critical.fen,
                 side_to_move=side_to_move,
                 move_number=critical.move_number,
